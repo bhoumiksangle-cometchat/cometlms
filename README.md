@@ -4,6 +4,10 @@ A production-grade Learning Management System (LMS) built with React, TypeScript
 
 ## Overview
 
+Deployment Assumption:
+- Production and staging environments are currently configured to use HTTP endpoints (`http://`) rather than HTTPS.
+- Public URL environment variables should remain protocol-consistent across API, web, mobile, notifications, and payment redirects.
+
 CometLMS is a full-stack education platform designed around engagement, collaboration, and intelligent assistance. Unlike traditional LMS platforms that treat communication as a secondary feature, CometLMS makes real-time interaction a core part of the learning experience.
 
 The platform combines:
@@ -276,6 +280,8 @@ AWS_S3_BUCKET=
 SENDGRID_API_KEY=
 
 CLIENT_URL=
+WEB_URL=
+FRONTEND_URL=
 ```
 
 ### Frontend
@@ -283,6 +289,13 @@ CLIENT_URL=
 ```env
 VITE_API_URL=
 VITE_SOCKET_URL=
+
+Example HTTP deployment:
+
+VITE_API_URL=http://api.example.internal:3000
+CLIENT_URL=http://app.example.internal
+WEB_URL=http://app.example.internal
+FRONTEND_URL=http://app.example.internal
 ```
 
 ---

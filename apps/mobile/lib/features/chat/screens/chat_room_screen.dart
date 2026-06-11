@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/auth_provider.dart';
 import '../../../core/network/socket_client.dart';
@@ -44,7 +45,12 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
 
   void _setupSocketListeners() {
     _socketClient.on('message:new', _onNewMessage);
+    _socketClient.on('message:sent', _onNewMessage);
     _socketClient.on('dm:message', _onNewMessage);
+    _socketClient.on('message:error', _onSocketError);
+    _socketClient.on('dm:error', _onSocketError);
+    _socketClient.on('room:error', _onSocketError);
+    _socketClient.on('call:ringing', _onIncomingCall);
     
     // Join the chat room via socket
     _socketClient.emit('room:join', {'roomId': widget.roomId});
@@ -52,7 +58,36 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
 
   void _removeSocketListeners() {
     _socketClient.off('message:new');
+    _socketClient.off('message:sent');
     _socketClient.off('dm:message');
+    _socketClient.off('message:error');
+    _socketClient.off('dm:error');
+    _socketClient.off('room:error');
+    _socketClient.off('call:ringing');
+  }
+
+  void _onSocketError(dynamic data) {
+    if (!mounted) return;
+
+    final message = data is Map ? (data['error']?.toString() ?? 'Failed to send message') : 'Failed to send message';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  void _onIncomingCall(dynamic data) {
+    if (!mounted || data == null) return;
+
+    context.push(
+      '/call/${widget.roomId}',
+      extra: {
+        'isIncoming': true,
+        'callType': data['callType'] ?? 'video',
+        'targetUserId': data['fromUserId'],
+        'callId': data['callId'],
+      },
+    );
   }
 
   void _onNewMessage(dynamic data) {
@@ -111,6 +146,13 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
       'content': content,
     };
 
+    if (!_socketClient.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chat connection unavailable. Please try again.')),
+      );
+      return;
+    }
+
     if (widget.roomId.startsWith('dm-')) {
       _socketClient.emit('dm:send', {
         'otherUserId': widget.otherUserId ?? '',
@@ -120,23 +162,7 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
       _socketClient.emit('message:send', payload);
     }
 
-    // Append locally for instant UI response (optimistic updates)
-    final localMsg = {
-      'id': 'local-${DateUtils.dateOnly(DateTime.now())}',
-      'content': content,
-      'sender': {
-        'id': user.id,
-        'name': user.name,
-      },
-      'createdAt': DateTime.now().toIso8601String(),
-    };
-
-    setState(() {
-      _messages.add(localMsg);
-    });
-
     _messageController.clear();
-    _scrollToBottom();
   }
 
   @override
@@ -153,8 +179,24 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
           IconButton(
             icon: const Icon(Icons.videocam_outlined),
             onPressed: () {
-              // Open Calling flow
-              // Emit call start and navigate to call screen
+              final callId = '${widget.roomId}-${DateTime.now().millisecondsSinceEpoch}';
+
+              if (widget.otherUserId != null) {
+                _socketClient.emit('call:invite', {
+                  'targetUserId': widget.otherUserId,
+                  'callType': 'video',
+                  'callId': callId,
+                });
+              }
+
+              context.push(
+                '/call/${widget.roomId}',
+                extra: {
+                  'callType': 'video',
+                  'targetUserId': widget.otherUserId,
+                  'callId': callId,
+                },
+              );
             },
           ),
         ],

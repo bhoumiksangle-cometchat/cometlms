@@ -100,6 +100,8 @@ class SocketClient {
       'dm:room',
       'dm:message',
       'message:new',
+      'message:sent',
+      'call:ringing',
       'message:received',
       'typing:status',
       'message:reaction_updated',

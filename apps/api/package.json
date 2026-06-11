@@ -6,7 +6,10 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsup src/server.ts --out-dir dist",
     "start": "node dist/server.js",
-    "seed:bots": "tsx prisma/seed-bots.ts"
+    "seed": "tsx prisma/seed.ts && tsx prisma/seed-bots.ts",
+    "seed:bots": "tsx prisma/seed-bots.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate"
   },
   "dependencies": {
     "express": "^4.18.2",

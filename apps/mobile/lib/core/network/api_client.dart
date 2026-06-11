@@ -4,17 +4,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiClient {
+  static const String deploymentBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:3000',
+  );
+
   late final Dio _dio;
   final _storage = const FlutterSecureStorage();
   
   // For iOS emulator use localhost, for Android emulator use 10.0.2.2
   // Can be customized or injected
   static String get baseUrl {
+    if (deploymentBaseUrl.isNotEmpty) return deploymentBaseUrl;
     if (kIsWeb) return 'http://localhost:3000';
-    if (Platform.isAndroid) {
-      return 'http://192.168.29.246:3000';
-    }
-    return 'http://192.168.29.246:3000';
+    if (Platform.isAndroid) return 'http://10.0.2.2:3000';
+    return 'http://localhost:3000';
   }
 
   ApiClient() {

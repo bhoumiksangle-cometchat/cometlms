@@ -22,6 +22,7 @@ dependencies:
 
   # WebSocket / Socket.IO
   socket_io_client: ^2.0.3+1
+  flutter_webrtc: ^1.2.0
 
   # Secure Storage (JWT tokens)
   flutter_secure_storage: ^9.2.2
@@ -48,7 +49,7 @@ dependencies:
   url_launcher: ^6.3.0
   image_picker: ^1.1.2
   file_picker: ^8.0.6
-  share_plus: ^9.0.0
+  share_plus: ^12.0.0
   permission_handler: ^11.3.1
 
   # Icons

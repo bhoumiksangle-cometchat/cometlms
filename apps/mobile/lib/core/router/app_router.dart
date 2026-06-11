@@ -83,6 +83,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final extra = state.extra as Map<String, dynamic>?;
           return CallScreen(
             roomId: roomId,
+            targetUserId: extra?['targetUserId'],
+            callId: extra?['callId'],
             callType: extra?['callType'] ?? 'video',
             isIncoming: extra?['isIncoming'] ?? false,
           );

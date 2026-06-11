@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cometlms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cometlms
+      POSTGRES_USER: cometlms
+      POSTGRES_PASSWORD: cometlms_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cometlms -d cometlms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cometlms-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: node:20
+    container_name: cometlms-api
+    working_dir: /workspace/apps/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/workspace
+    environment:
+      DATABASE_URL: postgresql://cometlms:cometlms_dev_password@postgres:5432/cometlms
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+      CLIENT_URL: http://localhost:5173
+      WEB_URL: http://localhost:5173
+      FRONTEND_URL: http://localhost:5173
+    ports:
+      - "3000:3000"
+    command: sh -c "cd /workspace && npm install --legacy-peer-deps && cd apps/api && npm run dev"
+
+volumes:
+  postgres_data:
+  redis_data:

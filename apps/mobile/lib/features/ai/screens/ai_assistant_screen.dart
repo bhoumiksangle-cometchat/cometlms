@@ -72,7 +72,10 @@ class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
         'prompt': text,
       });
 
-      final reply = response.data['data']?['reply'] ?? response.data['data'] ?? 'I could not generate a reply.';
+      final data = response.data['data'];
+      final String reply = data is Map
+          ? (data['content']?.toString() ?? 'I could not generate a reply.')
+          : data?.toString() ?? 'I could not generate a reply.';
       
       setState(() {
         _messages.add(Message(content: reply, isUser: false, timestamp: DateTime.now()));

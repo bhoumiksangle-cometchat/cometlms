@@ -1,3 +1,6 @@
+// Canonical application seed.
+// All future seed data should be added here.
+// Bot-specific configuration remains in prisma/seed-bots.ts.
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -54,6 +57,41 @@ async function main() {
     },
   });
   console.log('✅ Created admin:', admin.email);
+
+  const bulkUsers = [
+    ...Array.from({ length: 85 }, (_, i) => ({
+      email: `student${i + 1}@learnloop.test`,
+      name: `Student ${i + 1}`,
+      role: 'STUDENT',
+    })),
+    ...Array.from({ length: 10 }, (_, i) => ({
+      email: `instructor${i + 1}@learnloop.test`,
+      name: `Instructor ${i + 1}`,
+      role: 'INSTRUCTOR',
+    })),
+    ...Array.from({ length: 5 }, (_, i) => ({
+      email: `admin${i + 1}@learnloop.test`,
+      name: `Admin ${i + 1}`,
+      role: 'ADMIN',
+    })),
+  ];
+
+  for (const user of bulkUsers) {
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: {},
+      create: {
+        email: user.email,
+        passwordHash: hashedPassword,
+        name: user.name,
+        role: user.role as any,
+        isActive: true,
+        isVerified: true,
+      },
+    });
+  }
+
+  console.log(`✅ Seeded ${bulkUsers.length} additional users`);
 
   // Create categories
   const webDevCategory = await prisma.category.upsert({
@@ -124,6 +162,12 @@ async function main() {
       type: 'GROUP',
       ownerId: instructor.id,
       isActive: true,
+      members: {
+        create: {
+          userId: instructor.id,
+          role: 'owner',
+        },
+      },
     },
   });
 
@@ -141,6 +185,12 @@ async function main() {
       type: 'GROUP',
       ownerId: instructor.id,
       isActive: true,
+      members: {
+        create: {
+          userId: instructor.id,
+          role: 'owner',
+        },
+      },
     },
   });
 

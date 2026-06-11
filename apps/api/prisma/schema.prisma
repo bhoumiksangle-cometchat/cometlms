@@ -3,6 +3,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -69,6 +70,25 @@ enum LLMProvider {
   LANGCHAIN
 }
 
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationType {
+  EMAIL
+  PUSH
+  IN_APP
+}
+
 // ============================================
 // Core Models
 // ============================================
@@ -100,6 +120,7 @@ model User {
   notifications     Notification[]
   reviews           Review[]
   certificates      Certificate[]
+  liveSessions      LiveSession[] @relation("InstructorLiveSessions")
 }
 
 model Category {
@@ -138,6 +159,7 @@ model Course {
   payments      Payment[]
   reviews       Review[]
   certificates  Certificate[]
+  liveSessions  LiveSession[]
 }
 
 model Section {
@@ -359,7 +381,7 @@ model Payment {
   courseId      String   @map("course_id")
   amount        Float
   currency      String   @default("CNY")
-  status        String   // pending | completed | failed | refunded
+  status        PaymentStatus
   provider      String   // stripe | alipay | wechat
   providerId    String?  @map("provider_id")
   metadata      Json?
@@ -368,6 +390,10 @@ model Payment {
 
   user          User     @relation(fields: [userId], references: [id])
   course        Course   @relation(fields: [courseId], references: [id])
+
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
 }
 
 model Payout {
@@ -375,13 +401,15 @@ model Payout {
   instructorId  String   @map("instructor_id")
   amount        Float
   currency      String   @default("CNY")
-  status        String   // pending | completed | failed
+  status        PayoutStatus
   periodStart   DateTime @map("period_start")
   periodEnd     DateTime @map("period_end")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   instructor    User     @relation(fields: [instructorId], references: [id])
+
+  @@index([instructorId])
 }
 
 // ============================================
@@ -390,7 +418,7 @@ model Payout {
 model Notification {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
-  type      String   // email | push | in_app
+  type      NotificationType
   title     String
   message   String
   data      Json?
@@ -398,6 +426,9 @@ model Notification {
   createdAt DateTime @default(now()) @map("created_at")
 
   user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
 }
 
 model LiveSession {
@@ -411,6 +442,13 @@ model LiveSession {
   recordingUrl  String?
   participantCount Int   @default(0)
   createdAt     DateTime @default(now())
+
+  course        Course   @relation(fields: [courseId], references: [id])
+  instructor    User     @relation("InstructorLiveSessions", fields: [instructorId], references: [id])
+  recordings    SessionRecording[]
+
+  @@index([courseId])
+  @@index([instructorId])
 }
 
 model SessionRecording {
@@ -419,6 +457,10 @@ model SessionRecording {
   recordingUrl String
   duration    Int      @default(0)
   createdAt   DateTime @default(now())
+
+  session     LiveSession @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
 }
 
 // ============================================

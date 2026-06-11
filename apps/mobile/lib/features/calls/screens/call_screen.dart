@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/network/socket_client.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/network/webrtc_service.dart';
 
 class CallScreen extends StatefulWidget {
   final String roomId;
+  final String? targetUserId;
+  final String? callId;
   final String callType; // 'voice' or 'video'
   final bool isIncoming;
 
   const CallScreen({
     super.key,
     required this.roomId,
+    this.targetUserId,
+    this.callId,
     required this.callType,
     this.isIncoming = false,
   });
@@ -19,9 +26,33 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> {
+  final _webrtc = WebRTCService.instance;
+  final _socketClient = SocketClient();
   bool _isMuted = false;
   bool _isCameraOff = false;
   bool _isSpeakerOn = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _webrtc.configureCall(
+      targetUserId: widget.targetUserId,
+      callId: widget.callId,
+    );
+    _webrtc.initialize();
+
+    if (widget.isIncoming) {
+      _socketClient.emit('call:accepted', {
+        'targetUserId': widget.targetUserId,
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _webrtc.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,30 +65,23 @@ class _CallScreenState extends State<CallScreen> {
           // Background representing Remote Video Feed (mocking a beautiful abstract avatar or gradient)
           Positioned.fill(
             child: isVideo && !_isCameraOff
-                ? Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0xFF1E1B4B),
-                          Color(0xFF311042),
-                        ],
-                      ),
-                    ),
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.person, size: 80, color: Colors.white24),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Connecting to Peer Video...',
-                            style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                ? Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      RTCVideoView(_webrtc.remoteRenderer),
+                      Positioned(
+                        right: 16,
+                        top: 120,
+                        child: SizedBox(
+                          width: 120,
+                          height: 180,
+                          child: RTCVideoView(
+                            _webrtc.localRenderer,
+                            mirror: true,
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   )
                 : Container(
                     color: AppColors.backgroundDark,
@@ -153,6 +177,11 @@ class _CallScreenState extends State<CallScreen> {
                   icon: Icons.call_end,
                   color: AppColors.error,
                   onPressed: () {
+                    _socketClient.emit('call:ended', {
+                      'roomId': widget.roomId,
+                      'duration': 0,
+                      'callId': widget.callId ?? widget.roomId,
+                    });
                     context.pop();
                   },
                 ),

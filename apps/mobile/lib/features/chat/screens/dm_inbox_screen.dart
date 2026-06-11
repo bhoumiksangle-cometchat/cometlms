@@ -51,11 +51,25 @@ class ConversationsScreen extends ConsumerWidget {
                 final lastMessage = conversation['lastMessage']?['content'] ?? '';
                 final lastMessageTime = conversation['lastMessage']?['createdAt'] ?? '';
                 final type = conversation['type'] ?? 'GROUP';
+                final members = conversation['members'];
+                String? otherUserId;
+
+                if (members is List) {
+                  final currentUser = ref.read(authProvider).user;
+                  for (final member in members) {
+                    final userId = member['userId']?.toString();
+                    if (userId != null && userId != currentUser?.id) {
+                      otherUserId = userId;
+                      break;
+                    }
+                  }
+                }
 
                 return ListTile(
                   onTap: () {
                     context.push('/chat/$roomId', extra: {
                       'roomName': name,
+                      'otherUserId': otherUserId,
                     });
                   },
                   leading: CircleAvatar(

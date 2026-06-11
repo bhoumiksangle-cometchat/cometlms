@@ -28,6 +28,10 @@ This will start:
 - **Backend API**: http://localhost:3000
 - **Frontend**: http://localhost:5173
 
+HTTP Deployment Note:
+- Configure all public URLs using `http://` values.
+- Keep `CLIENT_URL`, `WEB_URL`, `FRONTEND_URL`, and `VITE_API_URL` protocol-consistent.
+
 ### Architecture
 
 ```
