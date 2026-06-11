@@ -1,0 +1,14 @@
+{
+  "name": "@lms/shared-types",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --out-dir dist --dts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsup": "^8.1.0"
+  }
+}

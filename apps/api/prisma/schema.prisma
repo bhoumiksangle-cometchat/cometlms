@@ -1,0 +1,453 @@
+// Prisma Schema for LMS
+// Run: npx prisma generate && npx prisma db push
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// Enums
+// ============================================
+enum UserRole {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+  SUPER_ADMIN
+  AI_AGENT
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum ChatRoomType {
+  GROUP
+  DM
+}
+
+enum MessageContentType {
+  TEXT
+  IMAGE
+  FILE
+  VOICE
+}
+
+enum ModerationStatus {
+  PENDING
+  DISMISSED
+  DELETED
+  ESCALATED
+}
+
+enum EventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum AgentType {
+  STUDY_ASSISTANT
+  FAQ_BOT
+  INSTRUCTOR_COPILOT
+}
+
+enum LLMProvider {
+  OPENAI
+  LANGCHAIN
+}
+
+// ============================================
+// Core Models
+// ============================================
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  name          String
+  avatarUrl     String?   @map("avatar_url")
+  bio           String?
+  role          UserRole  @default(STUDENT)
+  isActive      Boolean   @default(true) @map("is_active")
+  isVerified    Boolean   @default(false) @map("is_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  taughtCourses     Course[]           @relation("InstructorCourses")
+  enrollments       Enrollment[]
+  lessonCompletions LessonCompletion[]
+  chatRoomMembers   ChatRoomMember[]
+  ownedChatRooms    ChatRoom[]
+  sentMessages      ChatMessage[]      @relation("SentMessages")
+  moderationLogs    ChatModerationLog[] @relation("ModerationLogs")
+  aiAgentConfigs    AiAgentConfig[]    @relation("BotUser")
+  quizAttempts      QuizAttempt[]
+  payments          Payment[]
+  payouts           Payout[]
+  notifications     Notification[]
+  reviews           Review[]
+  certificates      Certificate[]
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  courses     Course[]
+}
+
+model Course {
+  id            String        @id @default(uuid())
+  instructorId  String        @map("instructor_id")
+  title         String
+  slug          String        @unique
+  description   String
+  thumbnailUrl  String?       @map("thumbnail_url")
+  categoryId    String        @map("category_id")
+  price         Float         @default(0)
+  currency      String        @default("CNY")
+  level         CourseLevel   @default(BEGINNER)
+  language      String        @default("zh-CN")
+  status        CourseStatus  @default(DRAFT)
+  chatRoomId    String?       @unique @map("chat_room_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  publishedAt   DateTime?     @map("published_at")
+
+  instructor    User          @relation("InstructorCourses", fields: [instructorId], references: [id])
+  category      Category      @relation(fields: [categoryId], references: [id])
+  sections      Section[]
+  chatRoom      ChatRoom?     @relation(fields: [chatRoomId], references: [roomId])
+  enrollments   Enrollment[]
+  aiAgentConfigs AiAgentConfig[]
+  engagementMetrics CourseEngagementMetrics[]
+  payments      Payment[]
+  reviews       Review[]
+  certificates  Certificate[]
+}
+
+model Section {
+  id          String   @id @default(uuid())
+  courseId    String   @map("course_id")
+  title       String
+  description String?
+  order       Int
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  course      Course   @relation(fields: [courseId], references: [id])
+  lessons     Lesson[]
+  quizzes     Quiz[]
+}
+
+model Lesson {
+  id          String   @id @default(uuid())
+  sectionId   String   @map("section_id")
+  title       String
+  description String?
+  videoUrl    String?  @map("video_url")
+  duration    Int?     // seconds
+  order       Int
+  isFree      Boolean  @default(false) @map("is_free")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  section     Section  @relation(fields: [sectionId], references: [id])
+  completions LessonCompletion[]
+}
+
+model LessonCompletion {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  lessonId  String   @map("lesson_id")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  user      User     @relation(fields: [userId], references: [id])
+  lesson    Lesson   @relation(fields: [lessonId], references: [id])
+
+  @@unique([userId, lessonId])
+}
+
+// ============================================
+// Chat Models
+// ============================================
+model ChatRoom {
+  id        String   @id @default(uuid())
+  roomId    String   @unique @map("room_id")
+  name      String
+  type      ChatRoomType @default(GROUP)
+  ownerId   String   @map("owner_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner     User           @relation(fields: [ownerId], references: [id])
+  course    Course?
+  members   ChatRoomMember[]
+  messages  ChatMessage[]
+}
+
+model ChatRoomMember {
+  id        String       @id @default(uuid())
+  roomId    String       @map("room_id")
+  userId    String       @map("user_id")
+  role      String       @default("member") // owner | member | bot
+  joinedAt  DateTime     @default(now()) @map("joined_at")
+  removedAt DateTime?    @map("removed_at")
+
+  room      ChatRoom     @relation(fields: [roomId], references: [id])
+  user      User         @relation(fields: [userId], references: [id])
+
+  @@unique([roomId, userId])
+}
+
+model ChatMessage {
+  id               String   @id @default(uuid())
+  roomId           String   @map("room_id")
+  senderId         String   @map("sender_id")
+  parentMessageId  String?  @map("parent_message_id")
+  content          String
+  contentType      MessageContentType @default(TEXT) @map("content_type")
+  isEdited         Boolean  @default(false) @map("is_edited")
+  isDeleted        Boolean  @default(false) @map("is_deleted")
+  metadata         Json?    // reactions, mentions, etc.
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  room      ChatRoom     @relation(fields: [roomId], references: [id])
+  sender    User         @relation("SentMessages", fields: [senderId], references: [id])
+  parent    ChatMessage? @relation("ThreadReplies", fields: [parentMessageId], references: [id])
+  replies   ChatMessage[] @relation("ThreadReplies")
+}
+
+model ChatModerationLog {
+  id              String           @id @default(uuid())
+  messageId       String           @map("message_id")
+  courseId        String?          @map("course_id")
+  senderId        String           @map("sender_id")
+  roomId          String           @map("room_id")
+  messagePreview  String           @map("message_preview")
+  flagReason      String           @map("flag_reason")
+  status          ModerationStatus @default(PENDING)
+  actionedBy      String?          @map("actioned_by")
+  actionedAt      DateTime?        @map("actioned_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  sender          User             @relation("ModerationLogs", fields: [senderId], references: [id])
+}
+
+model ActivityEventLog {
+  id            String       @id @default(uuid())
+  eventType     String       @map("event_type")
+  payload       Json         @map("payload")
+  status        EventStatus  @default(RECEIVED)
+  errorMessage  String?      @map("error_message")
+  processedAt   DateTime?    @map("processed_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+}
+
+model AiAgentConfig {
+  id            String       @id @default(uuid())
+  courseId      String?      @map("course_id")
+  agentType     AgentType    @map("agent_type")
+  botUserId     String       @map("bot_user_id")
+  provider      LLMProvider
+  systemPrompt  String       @map("system_prompt")
+  modelName     String       @map("model_name")
+  isEnabled     Boolean      @default(true) @map("is_enabled")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  botUser       User         @relation("BotUser", fields: [botUserId], references: [id])
+  course        Course?      @relation(fields: [courseId], references: [id])
+}
+
+model CourseEngagementMetrics {
+  id              String   @id @default(uuid())
+  courseId        String   @map("course_id")
+  date            DateTime @db.Date
+  totalMessages   Int      @default(0) @map("total_messages")
+  totalReactions  Int      @default(0) @map("total_reactions")
+  activeChatters  Int      @default(0) @map("active_chatters")
+  callMinutes     Int      @default(0) @map("call_minutes")
+  flaggedMessages Int      @default(0) @map("flagged_messages")
+  resolvedFlags   Int      @default(0) @map("resolved_flags")
+
+  course          Course   @relation(fields: [courseId], references: [id])
+
+  @@unique([courseId, date])
+}
+
+// ============================================
+// Enrollment & Quiz Models
+// ============================================
+model Enrollment {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  courseId  String   @map("course_id")
+  enrolledAt DateTime @default(now()) @map("enrolled_at")
+
+  user      User     @relation(fields: [userId], references: [id])
+  course    Course   @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+}
+
+model Quiz {
+  id          String   @id @default(uuid())
+  sectionId   String   @map("section_id")
+  title       String
+  description String?
+  timeLimit   Int?     @map("time_limit") // minutes
+  passingScore Int     @default(60) @map("passing_score")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  section     Section  @relation(fields: [sectionId], references: [id])
+  questions   Question[]
+  attempts    QuizAttempt[]
+}
+
+model Question {
+  id        String   @id @default(uuid())
+  quizId    String   @map("quiz_id")
+  text      String
+  type      String   // single_choice | multiple_choice | true_false
+  options   Json     // array of { id, text, isCorrect }
+  explanation String?
+  order     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  quiz      Quiz     @relation(fields: [quizId], references: [id])
+}
+
+model QuizAttempt {
+  id        String   @id @default(uuid())
+  quizId    String   @map("quiz_id")
+  userId    String   @map("user_id")
+  answers   Json     // { questionId: selectedOptionId }
+  score     Float
+  passed    Boolean
+  startedAt DateTime @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+
+  quiz      Quiz     @relation(fields: [quizId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+// ============================================
+// Payment Models
+// ============================================
+model Payment {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  courseId      String   @map("course_id")
+  amount        Float
+  currency      String   @default("CNY")
+  status        String   // pending | completed | failed | refunded
+  provider      String   // stripe | alipay | wechat
+  providerId    String?  @map("provider_id")
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user          User     @relation(fields: [userId], references: [id])
+  course        Course   @relation(fields: [courseId], references: [id])
+}
+
+model Payout {
+  id            String   @id @default(uuid())
+  instructorId  String   @map("instructor_id")
+  amount        Float
+  currency      String   @default("CNY")
+  status        String   // pending | completed | failed
+  periodStart   DateTime @map("period_start")
+  periodEnd     DateTime @map("period_end")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  instructor    User     @relation(fields: [instructorId], references: [id])
+}
+
+// ============================================
+// Notification Models
+// ============================================
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String   // email | push | in_app
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model LiveSession {
+  id            String   @id @default(uuid())
+  courseId      String
+  instructorId  String
+  roomName      String
+  provider      String   @default("livekit")
+  startedAt     DateTime?
+  endedAt       DateTime?
+  recordingUrl  String?
+  participantCount Int   @default(0)
+  createdAt     DateTime @default(now())
+}
+
+model SessionRecording {
+  id          String   @id @default(uuid())
+  sessionId   String
+  recordingUrl String
+  duration    Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// ============================================
+// Review & Certificate Models
+// ============================================
+model Review {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  courseId  String   @map("course_id")
+  rating    Int      // 1-5
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User     @relation(fields: [userId], references: [id])
+  course    Course   @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+}
+
+model Certificate {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  courseId  String   @map("course_id")
+  issuedAt  DateTime @default(now()) @map("issued_at")
+  pdfUrl    String?  @map("pdf_url")
+
+  user      User     @relation(fields: [userId], references: [id])
+  course    Course   @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+}

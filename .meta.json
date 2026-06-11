@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "created": "2026-06-01T00:00:00Z",
+  "lastUpdated": "2026-06-01T00:00:00Z",
+  "workflow": "bugfix",
+  "tasks": {
+    "t1": {
+      "title": "Bug Condition Exploration Test",
+      "description": "Create property-based tests for missing DM Socket.IO handlers",
+      "type": "bug_condition_exploration",
+      "status": "not_started"
+    },
+    "t2": {
+      "title": "DM Fetch Handler",
+      "description": "Implement Socket.IO handler for fetching DM conversation history",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t3": {
+      "title": "DM Send Handler",
+      "description": "Implement Socket.IO handler for sending DM messages",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t4": {
+      "title": "CourseDiscussion Integration",
+      "description": "Connect CourseDiscussion component to real Socket.IO chat",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t5": {
+      "title": "OpenAI API Integration",
+      "description": "Set up OpenAI SDK and implement real API calls for AI agents",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t6": {
+      "title": "Bot User Seeding",
+      "description": "Create script to seed database with bot users",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t7": {
+      "title": "Profanity Detection",
+      "description": "Add profanity word list or API integration for moderation",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t8": {
+      "title": "Real-time Moderation",
+      "description": "Add Socket.IO subscription for moderation queue updates",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t9": {
+      "title": "Push Notification System",
+      "description": "Set up BullMQ + Redis for notification queue",
+      "type": "implementation",
+      "status": "not_started"
+    },
+    "t10": {
+      "title": "Integration Testing",
+      "description": "Run comprehensive tests to verify all bug fixes",
+      "type": "testing",
+      "status": "not_started"
+    }
+  }
+}
