@@ -67,8 +67,6 @@ apps/mobile/.packages
 apps/mobile/pubspec.lock
 apps/mobile_android_backup
 
-src
-
 # Android
 **/android/.gradle/
 **/android/local.properties

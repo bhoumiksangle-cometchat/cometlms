@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"path": "../../../../.."
+		},
+		{
+			"path": "../../../../../../riidl lms/components"
+		},
+		{
+			"path": "../../../../../../riidl lms"
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/^npm install$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}
