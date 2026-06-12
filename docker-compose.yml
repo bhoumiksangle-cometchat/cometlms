@@ -1,58 +1,117 @@
+# =============================================================================
+# CometLMS — Production Docker Compose
+# Usage:  cp .env.example .env && docker compose up -d --build
+# =============================================================================
+
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16
+  # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: cometlms-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: cometlms
-      POSTGRES_USER: cometlms
-      POSTGRES_PASSWORD: cometlms_dev_password
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-cometlms}
+      POSTGRES_USER: ${POSTGRES_USER:-cometlms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cometlms_secret}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cometlms -d cometlms"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cometlms} -d ${POSTGRES_DB:-cometlms}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
+  # ---------------------------------------------------------------------------
+  # Redis 7
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: cometlms-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
+  # ---------------------------------------------------------------------------
+  # API — Express + Socket.IO + Prisma
+  # ---------------------------------------------------------------------------
   api:
-    image: node:20
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     container_name: cometlms-api
-    working_dir: /workspace/apps/api
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - .:/workspace
     environment:
-      DATABASE_URL: postgresql://cometlms:cometlms_dev_password@postgres:5432/cometlms
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cometlms}:${POSTGRES_PASSWORD:-cometlms_secret}@postgres:5432/${POSTGRES_DB:-cometlms}
       REDIS_URL: redis://redis:6379
-      NODE_ENV: development
-      CLIENT_URL: http://localhost:5173
-      WEB_URL: http://localhost:5173
-      FRONTEND_URL: http://localhost:5173
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost}
+      WEB_URL: ${WEB_URL:-http://localhost}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Web — React (Nginx serves static bundle + proxies API/WS)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: cometlms-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
-      - "3000:3000"
-    command: sh -c "cd /workspace && npm install --legacy-peer-deps && cd apps/api && npm run dev"
+      - "80:80"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge

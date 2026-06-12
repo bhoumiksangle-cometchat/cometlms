@@ -1,70 +1,38 @@
-# Self-Hosted Deployment
+# API Deployment Notes
 
-Services:
-- PostgreSQL 16
-- Redis 7
-- API (Node.js)
+> **For full deployment instructions, see the root [`DEPLOYMENT.md`](../../DEPLOYMENT.md).**
 
-Container Images:
-- apps/api/Dockerfile
-- apps/web/Dockerfile
+This API is deployed as part of the Docker Compose stack. The container:
 
-Current Status:
-- Multi-stage container structure added
-- Additional optimization still required for monorepo production builds
+1. Runs Prisma migrations automatically on startup
+2. Seeds the database (users, courses, chat rooms, AI bots)
+3. Starts the Node.js server on port 3000
 
-HTTP Deployment Requirements:
-- Configure CLIENT_URL, WEB_URL, FRONTEND_URL and VITE_API_URL using http:// endpoints.
-- Ensure API and web origins are explicitly included in CORS allowlists.
-- Socket.IO traffic will use HTTP/WS rather than HTTPS/WSS.
-- Generated notification and payment links inherit configured HTTP URLs.
+## Container Details
 
-Health endpoint:
-- GET /api/health
+- **Dockerfile:** `apps/api/Dockerfile` (build context = repo root)
+- **Entrypoint:** `apps/api/docker-entrypoint.sh`
+- **Exposed port:** 3000 (internal network only — Nginx proxies from port 80)
+- **Health check:** `GET /api/health`
 
-Startup:
-1. docker compose up -d postgres redis
-2. Run Prisma migrations
-3. Run seed workflow
-4. Start API
+## Environment Variables
 
-Seed Workflow:
-- npm run seed
-- Executes:
-	- prisma/seed.ts
-	- prisma/seed-bots.ts
+See root `.env.example` for the complete list. Key API variables:
 
-Legacy seed file:
-- src/seed.ts (deprecated)
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string (auto-constructed in compose) |
+| `REDIS_URL` | Redis connection string (auto-constructed in compose) |
+| `JWT_SECRET` | Access token signing key |
+| `JWT_REFRESH_SECRET` | Refresh token signing key |
+| `GROQ_API_KEY` | Groq API key for AI agents |
+| `GROQ_MODEL` | LLM model name (default: `llama-3.3-70b-versatile`) |
+| `CLIENT_URL` | Frontend origin for CORS |
 
-Migration path from Supabase:
-1. Export Supabase PostgreSQL data.
-2. Import into self-hosted PostgreSQL.
-3. Update DATABASE_URL.
-4. Run validation and smoke tests.
+## Seed Accounts
 
-Backup:
-- scripts/backup-postgres.sh
-
-Restore:
-- scripts/restore-postgres.sh <backup.sql>
-
-Recommended:
-- Daily automated PostgreSQL backups
-- Offsite backup storage
-- Periodic restore testing
-
-Monitoring Roadmap:
-- API metrics
-- PostgreSQL metrics
-- Redis metrics
-- Queue health monitoring
-- Error tracking (Sentry)
-
-Production Hardening Remaining:
-- Real Prisma migrations
-- Multi-stage Docker builds
-- Automated backups
-- Metrics dashboards
-- Alerting
-- Secret management
+| Role | Email | Password |
+|------|-------|----------|
+| Student | `student@learnloop.test` | `Password123` |
+| Instructor | `instructor@learnloop.test` | `Password123` |
+| Admin | `admin@learnloop.test` | `Password123` |

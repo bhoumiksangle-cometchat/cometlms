@@ -1,0 +1,28 @@
+# Dependencies (reinstalled in Docker)
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+
+# Build artifacts (rebuilt in Docker)
+apps/*/dist
+packages/*/dist
+
+# Environment files (passed via docker-compose)
+.env
+apps/*/.env
+
+# Git
+.git
+.github
+
+# IDE
+.vscode
+.idea
+
+# Misc
+.DS_Store
+coverage
+*.log
+.kiro
+.claude
+apps/mobile

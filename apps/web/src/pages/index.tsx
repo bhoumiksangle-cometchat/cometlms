@@ -31,6 +31,7 @@ import { apiClient } from '../lib/apiClient';
 import { DevBypass } from '../components/DevBypass';
 import { useCallManager } from '../features/chat/CallManager';
 import { NotificationPrompt } from '../components/NotificationPrompt';
+import { notificationService } from '../lib/notifications';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 

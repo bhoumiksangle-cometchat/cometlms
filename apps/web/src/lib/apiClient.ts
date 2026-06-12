@@ -11,7 +11,9 @@ class ApiClient {
   private token: string | null = null;
 
   constructor() {
-    const baseURL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || process.env.VITE_API_URL || 'http://localhost:3000';
+    const envUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL);
+    // Empty string means same-origin (requests go to current host, Nginx proxies /api)
+    const baseURL = envUrl !== undefined && envUrl !== null ? envUrl : 'http://localhost:3000';
 
     this.client = axios.create({
       baseURL,

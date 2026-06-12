@@ -8,8 +8,10 @@ export function connectSocket(token: string) {
     return socket;
   }
 
-  const apiUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || process.env.VITE_API_URL || 'http://localhost:3000';
-  console.log('[Socket Client] Connecting to:', apiUrl);
+  const envUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL);
+  // Empty string means same-origin (socket.io connects to current host, Nginx upgrades WS)
+  const apiUrl = envUrl !== undefined && envUrl !== null ? envUrl : 'http://localhost:3000';
+  console.log('[Socket Client] Connecting to:', apiUrl || '(same origin)');
   console.log('[Socket Client] Using token:', token ? 'Token present' : 'No token');
   
   socket = io(apiUrl, {
