@@ -105,6 +105,8 @@ model User {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
+  pushNotificationsEnabled Boolean @default(true) @map("push_notifications_enabled")
+
   // Relations
   taughtCourses     Course[]           @relation("InstructorCourses")
   enrollments       Enrollment[]
@@ -121,6 +123,7 @@ model User {
   reviews           Review[]
   certificates      Certificate[]
   liveSessions      LiveSession[] @relation("InstructorLiveSessions")
+  deviceToken       DeviceToken?
 }
 
 model Category {
@@ -492,4 +495,20 @@ model Certificate {
   course    Course   @relation(fields: [courseId], references: [id])
 
   @@unique([userId, courseId])
+}
+
+
+// ============================================
+// Device Token Model (Push Notifications)
+// ============================================
+model DeviceToken {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  token       String
+  platform    String   // "web" | "android" | "ios"
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("device_tokens")
 }

@@ -58,6 +58,7 @@ export interface ChatContextType {
   currentRoom: ChatRoom | null;
   typingUsers: TypingUser[];
   userPresence: Map<string, UserPresence>;
+  activeGroupCall: { roomId: string; startedBy: string; callType: string; meetingUrl: string; startedAt: string } | null;
   
   // Methods
   disconnectFromChat: () => void;
@@ -70,6 +71,8 @@ export interface ChatContextType {
   deleteMessage: (messageId: string, roomId: string) => void;
   startTyping: (roomId: string) => void;
   stopTyping: (roomId: string) => void;
+  startGroupCall: (roomId: string, callType: 'voice' | 'video') => void;
+  endGroupCall: (roomId: string) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -80,6 +83,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [currentRoom, setCurrentRoom] = useState<ChatRoom | null>(null);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const [userPresence, setUserPresence] = useState<Map<string, UserPresence>>(new Map());
+  const [activeGroupCall, setActiveGroupCall] = useState<{ roomId: string; startedBy: string; callType: string; meetingUrl: string; startedAt: string } | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -209,6 +213,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Listen for call events
     socket.on('call:started', ({ roomId, startedBy, callType, meetingUrl, startedAt }: { roomId: string; startedBy: string; callType: string; meetingUrl: string; startedAt: string }) => {
       console.log(`Call started in ${roomId} by ${startedBy}`);
+      setActiveGroupCall({ roomId, startedBy, callType, meetingUrl, startedAt });
     });
 
     socket.on('call:user_joined', ({ roomId, userId }: { roomId: string; userId: string }) => {
@@ -221,6 +226,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     socket.on('call:ended', ({ roomId, endedBy, duration, recordingUrl }: { roomId: string; endedBy: string; duration: number; recordingUrl?: string }) => {
       console.log(`Call in ${roomId} ended by ${endedBy}, duration: ${duration}s`);
+      setActiveGroupCall((prev) => (prev?.roomId === roomId ? null : prev));
     });
 
     // Cleanup listeners when socket changes or component unmounts
@@ -343,6 +349,25 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
+  const startGroupCall = useCallback((roomId: string, callType: 'voice' | 'video') => {
+    const currentSocket = getSocket();
+    if (currentSocket) {
+      const meetingUrl = `${window.location.origin}/call/${roomId}`;
+      currentSocket.emit('call:started', { roomId, callType, meetingUrl });
+    }
+  }, []);
+
+  const endGroupCall = useCallback((roomId: string) => {
+    const currentSocket = getSocket();
+    if (currentSocket) {
+      currentSocket.emit('call:ended', {
+        roomId,
+        callId: roomId,
+        duration: 0,
+      });
+    }
+  }, []);
+
   return (
     <ChatContext.Provider
       value={{
@@ -351,6 +376,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         currentRoom,
         typingUsers,
         userPresence,
+        activeGroupCall,
         disconnectFromChat,
         joinRoom,
         sendMessage,
@@ -361,6 +387,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         deleteMessage,
         startTyping,
         stopTyping,
+        startGroupCall,
+        endGroupCall,
       }}
     >
       {children}

@@ -17,6 +17,7 @@ import {
   PlayCircle,
   Search,
   ShieldAlert,
+  Smartphone,
   Sparkles,
   Users,
   Video,
@@ -26,6 +27,7 @@ import { CourseList, CourseDetail, LessonViewer, CourseDiscussion as CourseDiscu
 import CreateCourse from '../features/courses/CreateCourse';
 import DirectMessagesPage from '../features/chat/DirectMessagesPage';
 import { DiagnosticPage } from './DiagnosticPage';
+import { DownloadPage } from './DownloadPage';
 import ChatWindow from '../features/chat/ChatWindow';
 import { apiClient } from '../lib/apiClient';
 import { DevBypass } from '../components/DevBypass';
@@ -88,6 +90,7 @@ export function App() {
         <Route path="/courses/:id/discussion" element={isAuthenticated ? <AppLayout><CourseDiscussionPage /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/:courseId/sections/:sectionId/lessons/:lessonId" element={isAuthenticated ? <AppLayout><LessonViewer /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/diagnostic" element={<DiagnosticPage />} />
+        <Route path="/download" element={<DownloadPage />} />
       </Routes>
       <DevBypass />
       {isAuthenticated && <NotificationPrompt />}
@@ -164,6 +167,10 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           <button className="nav-button" onClick={() => navigate('/messages')}>
             <MessageSquare />
             <span>Messages</span>
+          </button>
+          <button className="nav-button" onClick={() => navigate('/download')}>
+            <Smartphone />
+            <span>Mobile App</span>
           </button>
         </nav>
         <div className="sidebar-card">

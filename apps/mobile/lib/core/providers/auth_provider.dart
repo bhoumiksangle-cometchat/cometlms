@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/user.dart';
 import '../network/api_client.dart';
 import '../network/socket_client.dart';
+import '../services/push_notification_service.dart';
 
 class AuthState {
   final User? user;
@@ -34,8 +35,11 @@ class AuthState {
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _apiClient;
   final SocketClient _socketClient;
+  final PushNotificationService _pushNotificationService;
 
-  AuthNotifier(this._apiClient, this._socketClient) : super(AuthState()) {
+  AuthNotifier(this._apiClient, this._socketClient)
+      : _pushNotificationService = PushNotificationService(apiClient: _apiClient),
+        super(AuthState()) {
     tryAutoLogin();
   }
 
@@ -53,6 +57,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
         _socketClient.connect(token);
         
         state = AuthState(user: user, isAuthenticated: true);
+        
+        // Initialize push notifications after successful auto-login
+        await _initializePushNotifications();
       } else {
         state = AuthState(isAuthenticated: false);
       }
@@ -85,6 +92,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
         _socketClient.connect(accessToken);
 
         state = AuthState(user: user, isAuthenticated: true);
+        
+        // Initialize push notifications after successful login
+        await _initializePushNotifications();
+        
         return true;
       } else {
         state = state.copyWith(isLoading: false, errorMessage: response.data['error'] ?? 'Login failed');
@@ -126,6 +137,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
         _socketClient.connect(accessToken);
 
         state = AuthState(user: user, isAuthenticated: true);
+        
+        // Initialize push notifications after successful registration
+        await _initializePushNotifications();
+        
         return true;
       } else {
         state = state.copyWith(isLoading: false, errorMessage: response.data['error'] ?? 'Registration failed');
@@ -139,6 +154,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     state = state.copyWith(isLoading: true);
+    
+    // Remove device token before clearing auth credentials
+    try {
+      await _pushNotificationService.removeToken();
+    } catch (_) {
+      // Ignore errors during token removal — logout should always succeed
+    }
+    
     try {
       await _apiClient.post('/api/auth/logout');
     } catch (_) {
@@ -150,6 +173,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _socketClient.disconnect();
     
     state = AuthState();
+  }
+
+  /// Initialize push notifications after successful authentication.
+  ///
+  /// Requests permission, registers the FCM token with the backend,
+  /// and starts listening for token refresh events.
+  Future<void> _initializePushNotifications() async {
+    try {
+      await _pushNotificationService.requestPermission();
+      await _pushNotificationService.registerToken();
+      _pushNotificationService.listenForTokenRefresh();
+      _pushNotificationService.configureForegroundHandler();
+      _pushNotificationService.configureNotificationTapHandler();
+    } catch (_) {
+      // Push notification setup should not block authentication flow
+    }
   }
 }
 

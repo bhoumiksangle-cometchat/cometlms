@@ -15,6 +15,7 @@ export class UserService {
         role: true,
         isActive: true,
         isVerified: true,
+        pushNotificationsEnabled: true,
         createdAt: true,
         updatedAt: true,
       },

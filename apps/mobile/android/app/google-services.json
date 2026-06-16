@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "475640851640",
+    "project_id": "cometlms",
+    "storage_bucket": "cometlms.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475640851640:android:5c92b95400f6ab7a97d84d",
+        "android_client_info": {
+          "package_name": "com.cometlms.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAG-KRTWc-BM4Ex1k89ArAQxZI6PnAzIJg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

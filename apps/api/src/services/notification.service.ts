@@ -1,6 +1,7 @@
 import { prisma } from '../server';
 import sgMail from '@sendgrid/mail';
 import nodemailer from 'nodemailer';
+import { addNotificationJob } from '../lib/queue';
 
 // Initialize SendGrid (if API key is provided)
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
@@ -110,7 +111,9 @@ export class NotificationService {
   }
 
   /**
-   * Send push notification (placeholder for FCM/APNs)
+   * Send push notification via the BullMQ notification queue.
+   * The notification worker will check the user's toggle and device token,
+   * then dispatch via FCM.
    */
   private async sendPushNotification(
     userId: string,
@@ -118,27 +121,13 @@ export class NotificationService {
     message: string,
     data?: Record<string, any>
   ): Promise<void> {
-    // TODO: Implement FCM/APNs integration
-    console.log(`[NotificationService] Push notification (placeholder):`, {
+    await addNotificationJob({
       userId,
+      type: 'push',
       title,
       message,
       data,
     });
-
-    // For now, fall back to in-app notification
-    const notification = await prisma.notification.create({
-      data: {
-        userId,
-        type: 'in_app',
-        title,
-        message,
-        data: data || {},
-        read: false,
-      },
-    });
-
-    await this.emitInAppNotification(userId, notification);
   }
 
   /**

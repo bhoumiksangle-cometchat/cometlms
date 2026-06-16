@@ -1,52 +1,77 @@
-# CometLMS — Docker Deployment Guide
+# CometLMS — Deployment Guide
 
-Deploy the full CometLMS stack (API + Web + PostgreSQL + Redis) on a single machine
-using **only Docker**. No Node.js, PM2, or host Nginx required.
+## Production URLs
+
+| Service | URL |
+|---------|-----|
+| Web app | `https://lms.cometchat-staging.com` |
+| API (direct — used by mobile) | `https://cometlms-a.cometchat-staging.com` |
 
 ---
 
-## Prerequisites
+## Architecture
 
-- Ubuntu 22.04+ (or any Linux with Docker)
+```
+Mobile App  ──────────────────────────────────► cometlms-a.cometchat-staging.com
+                                                        │
+                                                   [ EC2 host :3000 ]
+                                                        │
+Browser  ──► lms.cometchat-staging.com                  │
+                    │                                   │
+             [ EC2 host :80 ]                           │
+                    │                                   │
+             ┌──────▼──────┐                     ┌──────▼──────┐
+             │  web (Nginx) │                     │     api     │
+             │  :80         │──── /api/* ────────►│   :3000     │
+             │  React SPA   │──── /socket.io/ ───►│  Express    │
+             └─────────────┘                     └──────┬───────┘
+                                                        │
+                                               ┌────────┴────────┐
+                                          ┌────▼────┐       ┌────▼────┐
+                                          │postgres │       │  redis  │
+                                          │ :5432   │       │  :6379  │
+                                          └─────────┘       └─────────┘
+```
+
+Only ports **80** (web) and **3000** (API) are exposed to the host.
+Postgres and Redis are internal to the Docker network only.
+
+---
+
+## EC2 Prerequisites
+
 - Docker Engine 24+ with Docker Compose v2
-- At least 2 GB RAM, 20 GB disk
-- Port 80 open (HTTP) and port 22 (SSH)
-
-### Install Docker (Ubuntu)
-
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# Log out and back in for group change to take effect
-```
+- Port **80** open for web app
+- Port **3000** open for mobile app API access
+- Port **22** open for SSH
 
 ---
 
-## Deployment Steps
+## Deploy Steps
 
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
-git clone <your-repo-url> cometlms
-cd cometlms
+git clone <repo-url> /opt/cometlms
+cd /opt/cometlms
 ```
 
-### 2. Create the environment file
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
+nano .env   # fill in every CHANGE_ME value
 ```
 
-Edit `.env` and set:
+Key values for this deployment:
 
-| Variable | What to set |
-|----------|-------------|
-| `POSTGRES_PASSWORD` | A strong random password |
-| `JWT_SECRET` | `openssl rand -base64 48` |
-| `JWT_REFRESH_SECRET` | `openssl rand -base64 48` |
-| `GROQ_API_KEY` | Your Groq API key |
-| `CLIENT_URL` / `WEB_URL` / `FRONTEND_URL` | `http://<EC2_PUBLIC_IP>` |
-| `VITE_API_URL` | Leave empty (Nginx proxies `/api` internally) |
+```env
+CLIENT_URL=https://lms.cometchat-staging.com
+WEB_URL=https://lms.cometchat-staging.com
+FRONTEND_URL=https://lms.cometchat-staging.com
+WEB_PORT=80          # change to 8080 if port 80 is already taken
+VITE_API_URL=        # leave empty — Nginx proxies /api internally
+```
 
 ### 3. Build and start
 
@@ -54,40 +79,23 @@ Edit `.env` and set:
 docker compose up -d --build
 ```
 
-First build takes 2–4 minutes. Subsequent starts are instant.
+First build: ~3–5 min. Subsequent starts: instant.
 
 ### 4. Verify
 
 ```bash
-# API health check
-curl http://localhost/api/health
-# Should return: {"status":"ok","timestamp":"...","queues":{...}}
+# API health
+curl https://cometlms-a.cometchat-staging.com/api/health
+# → {"status":"ok","queues":{"healthy":true,...}}
 
 # Web app
-curl -s http://localhost/ | head -5
-# Should return HTML
+curl -s https://lms.cometchat-staging.com/ | grep '<title>'
+# → <title>LearnLoop LMS</title>
 ```
 
-Open `http://<EC2_PUBLIC_IP>/` in a browser. You should see the CometLMS login page.
-
 ---
 
-## What Happens Automatically
-
-1. **PostgreSQL** starts and waits for healthy connection
-2. **Redis** starts with AOF persistence
-3. **API** container:
-   - Runs `prisma migrate deploy` (applies all migrations)
-   - Runs seed scripts (creates test users, courses, chat rooms, AI bots)
-   - Starts the Node.js server on port 3000 (internal only)
-4. **Web** container:
-   - Serves the pre-built React app via Nginx on port 80
-   - Reverse-proxies `/api/*` → API container
-   - Reverse-proxies `/socket.io/*` → API container (with WebSocket upgrade)
-
----
-
-## Test Accounts (Seeded)
+## Seeded Test Accounts
 
 | Role | Email | Password |
 |------|-------|----------|
@@ -95,90 +103,87 @@ Open `http://<EC2_PUBLIC_IP>/` in a browser. You should see the CometLMS login p
 | Instructor | `instructor@learnloop.test` | `Password123` |
 | Admin | `admin@learnloop.test` | `Password123` |
 
+Migrations and seed run automatically on first start.
+
 ---
 
-## Architecture
+## Mobile App
+
+The Flutter app points directly at the API:
 
 ```
-Internet → :80
-              │
-       ┌──────▼──────┐
-       │   Nginx      │  (web container)
-       │   /          │  → static React bundle
-       │   /api/*     │  → proxy to api:3000
-       │   /socket.io │  → proxy + WS upgrade to api:3000
-       └──────┬───────┘
-              │ internal Docker network
-       ┌──────▼──────┐
-       │   API        │  Express + Socket.IO + BullMQ
-       │   :3000      │
-       └──┬───────┬───┘
-          │       │
-   ┌──────▼─┐  ┌─▼──────┐
-   │Postgres │  │ Redis  │
-   │  :5432  │  │ :6379  │
-   └─────────┘  └────────┘
+API_BASE_URL = https://cometlms-a.cometchat-staging.com
 ```
 
-Only port 80 is exposed to the host. Postgres, Redis, and the API are on an internal
-Docker network with no external access.
+This is baked in as the default in `apps/mobile/lib/core/network/api_client.dart`.
+
+To build:
+```bash
+cd apps/mobile
+flutter build apk   # Android
+flutter build ios   # iOS
+```
+
+No `--dart-define` needed — the default is already correct for production.
+
+---
+
+## Port Conflict on Port 80
+
+If something else is already using port 80 on the EC2:
+
+```bash
+# Find what's using it
+sudo lsof -i :80
+
+# If it's system Nginx/Apache, stop it
+sudo systemctl stop nginx && sudo systemctl disable nginx
+
+# OR change the web container port in .env
+WEB_PORT=8080
+docker compose up -d web
+```
 
 ---
 
 ## Common Operations
 
-### View logs
-
 ```bash
-docker compose logs -f api       # API logs
-docker compose logs -f web       # Nginx access logs
-docker compose logs -f postgres  # Database logs
-```
+# View logs
+docker compose logs -f api
+docker compose logs -f web
 
-### Restart a single service
+# Restart API after code change
+docker compose up -d --build api
 
-```bash
-docker compose restart api
-```
+# Rebuild web after config change (VITE_ vars require rebuild)
+docker compose up -d --build web
 
-### Rebuild after code changes
+# Full redeploy
+docker compose down
+docker compose up -d --build
 
-```bash
+# Reset database (DESTRUCTIVE — deletes all data)
+docker compose down -v
 docker compose up -d --build
 ```
 
-### Reset the database
-
-```bash
-docker compose down -v           # Removes volumes (data loss!)
-docker compose up -d --build     # Fresh start with migrations + seed
-```
-
-### Run a one-off Prisma command
-
-```bash
-docker compose exec api npx prisma studio
-```
-
 ---
 
-## Adding TLS / Custom Domain (Next Step)
+## Environment Variable Reference
 
-When you're ready for HTTPS:
-
-1. Point your domain DNS A record to the EC2 IP
-2. Add a Certbot/Let's Encrypt sidecar container or use Traefik
-3. Update `CLIENT_URL` / `WEB_URL` / `FRONTEND_URL` to `https://yourdomain.com`
-4. Rebuild the web container with `VITE_API_URL=https://yourdomain.com/api` if needed
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `api` container restarting | Check `docker compose logs api` — likely missing env vars or Postgres not ready |
-| CORS errors in browser | Ensure `CLIENT_URL` in `.env` matches the URL you access in the browser |
-| WebSocket connection fails | Verify `/socket.io/` proxy block in nginx.conf — check `docker compose logs web` |
-| Database migration fails | Run `docker compose exec api npx prisma migrate status` to diagnose |
-| Seed fails with duplicate | Safe to ignore — seeds use `upsert` and skip existing records |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `POSTGRES_PASSWORD` | ✅ | Database password |
+| `JWT_SECRET` | ✅ | Access token signing key (`openssl rand -base64 48`) |
+| `JWT_REFRESH_SECRET` | ✅ | Refresh token signing key |
+| `GROQ_API_KEY` | ✅ | Groq API key for AI agents |
+| `CLIENT_URL` | ✅ | Web app public URL (for CORS) |
+| `WEB_URL` | ✅ | Same as CLIENT_URL |
+| `FRONTEND_URL` | ✅ | Same as CLIENT_URL |
+| `VITE_API_URL` | — | Leave empty (Nginx proxy handles it) |
+| `WEB_PORT` | — | Host port for web container (default: 80) |
+| `FIREBASE_PROJECT_ID` | — | Push notifications (optional) |
+| `FIREBASE_CLIENT_EMAIL` | — | Push notifications (optional) |
+| `FIREBASE_PRIVATE_KEY` | — | Push notifications (optional) |
+| `SENTRY_DSN` | — | Error tracking (optional) |

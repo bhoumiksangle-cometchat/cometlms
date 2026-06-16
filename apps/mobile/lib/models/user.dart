@@ -5,6 +5,7 @@ class User {
   final String role; // 'STUDENT', 'INSTRUCTOR', 'ADMIN', etc.
   final String? avatarUrl;
   final bool isActive;
+  final bool pushNotificationsEnabled;
 
   User({
     required this.id,
@@ -13,6 +14,7 @@ class User {
     required this.role,
     this.avatarUrl,
     required this.isActive,
+    this.pushNotificationsEnabled = true,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class User {
       role: json['role'] ?? 'STUDENT',
       avatarUrl: json['avatarUrl'] ?? json['avatar_url'],
       isActive: json['isActive'] ?? json['is_active'] ?? true,
+      pushNotificationsEnabled: json['pushNotificationsEnabled'] ?? json['push_notifications_enabled'] ?? true,
     );
   }
 
@@ -34,6 +37,7 @@ class User {
       'role': role,
       'avatarUrl': avatarUrl,
       'isActive': isActive,
+      'pushNotificationsEnabled': pushNotificationsEnabled,
     };
   }
 

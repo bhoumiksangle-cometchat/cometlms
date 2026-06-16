@@ -32,9 +32,13 @@ import {
   Minimize2,
   Maximize2,
   Volume2,
+  Users,
+  X,
 } from 'lucide-react';
 import { getSocket } from '../../lib/socket';
+import apiClient from '../../lib/apiClient';
 import { useAuth } from '../auth/useAuth';
+import { useChatContext } from './useChatContext';
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -53,6 +57,8 @@ interface CallContextValue {
   callState: CallState;
   callInfo: CallInfo | null;
   startCall: (targetUserId: string, targetUserName: string, callType?: CallType) => void;
+  startGroupCall: (roomId: string, callType: CallType) => void;
+  endGroupCall: (roomId: string) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -62,6 +68,8 @@ const CallCtx = createContext<CallContextValue>({
   callState: 'idle',
   callInfo: null,
   startCall: () => {},
+  startGroupCall: () => {},
+  endGroupCall: () => {},
 });
 
 export const useCallManager = () => useContext(CallCtx);
@@ -69,12 +77,42 @@ export const useCallManager = () => useContext(CallCtx);
 // ─────────────────────────────────────────────────────────────────
 // ICE / STUN configuration
 // ─────────────────────────────────────────────────────────────────
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
+// ICE servers are loaded from the backend (STUN + optional TURN) so connectivity
+// config lives in one place. We keep a sensible STUN-only fallback so calls on
+// the same network still work even if the fetch fails.
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+let cachedIceServers: RTCIceServer[] = FALLBACK_ICE_SERVERS;
+
+async function loadIceServers(): Promise<void> {
+  try {
+    const res = await apiClient.get<{ success: boolean; data: { iceServers: RTCIceServer[] } }>(
+      '/api/calls/ice-servers',
+    );
+    if (res?.data?.iceServers?.length) {
+      cachedIceServers = res.data.iceServers;
+    }
+  } catch (err) {
+    console.warn('[CallManager] Failed to load ICE servers, using STUN fallback:', err);
+  }
+}
+
+function getRtcConfig(): RTCConfiguration {
+  return { iceServers: cachedIceServers };
+}
+
+// SDP interop helper. A remote `signal.sdp` may arrive as a raw SDP string
+// (mobile / normalized web) OR as a full {type, sdp} descriptor object (legacy
+// web). Normalize both into a valid RTCSessionDescription.
+function toRTCSessionDescription(signal: any): RTCSessionDescription {
+  if (signal?.sdp && typeof signal.sdp === 'object') {
+    return new RTCSessionDescription(signal.sdp);
+  }
+  return new RTCSessionDescription({ type: signal.type, sdp: signal.sdp });
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Helpers
@@ -88,6 +126,7 @@ async function getMedia(video: boolean): Promise<MediaStream> {
 // ─────────────────────────────────────────────────────────────────
 export function CallManagerProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const { activeGroupCall, startGroupCall, endGroupCall } = useChatContext();
 
   const [callState, setCallState] = useState<CallState>('idle');
   const [callInfo, setCallInfo] = useState<CallInfo | null>(null);
@@ -102,6 +141,22 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Store the pending offer received before the user has accepted the call
+  const pendingOfferRef = useRef<{ fromUserId: string; signal: any; callId: string } | null>(null);
+  // Buffer ICE candidates that arrive before the remote description is set
+  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  // Keep a ref to callInfo so async handlers always see the latest value
+  const callInfoRef = useRef<CallInfo | null>(null);
+
+  // Keep callInfoRef in sync with state for use in async socket handlers
+  useEffect(() => {
+    callInfoRef.current = callInfo;
+  }, [callInfo]);
+
+  // Load ICE servers (STUN + TURN) from the backend once on mount
+  useEffect(() => {
+    loadIceServers();
+  }, []);
 
   // ── cleanup ───────────────────────────────────────────────────
   const teardown = useCallback(() => {
@@ -113,6 +168,8 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
+    pendingOfferRef.current = null;
+    pendingCandidatesRef.current = [];
     setCallTimer(0);
     setCallState('idle');
     setCallInfo(null);
@@ -125,7 +182,7 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
   // ── create peer connection ─────────────────────────────────────
   const createPC = useCallback((targetUserId: string, callId: string) => {
     const socket = getSocket();
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(getRtcConfig());
     pcRef.current = pc;
 
     // Local tracks → peer
@@ -184,22 +241,15 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
         localVideoRef.current.srcObject = stream;
       }
 
-      const pc = createPC(targetUserId, callId);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      socket.emit('call:invite', { targetUserId, callType });
-      socket.emit('call:signal', {
-        targetUserId,
-        callId,
-        signal: { type: 'offer', sdp: offer },
-      });
+      // Send the invite — the SDP offer will be created and sent after
+      // the callee accepts (in the onAccepted handler below).
+      socket.emit('call:invite', { targetUserId, callType, callId });
     } catch (err) {
       console.error('Could not start call:', err);
       setHasPermError(true);
       setTimeout(teardown, 3000);
     }
-  }, [callState, user?.id, createPC, teardown]);
+  }, [callState, user?.id, teardown]);
 
   // ── hang up ───────────────────────────────────────────────────
   const hangUp = useCallback(() => {
@@ -209,6 +259,7 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
         roomId: callInfo.callId,
         callId: callInfo.callId,
         duration: callTimer,
+        targetUserId: callInfo.targetUserId,
       });
     }
     teardown();
@@ -233,8 +284,28 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      createPC(callInfo.targetUserId, callInfo.callId);
-      socket?.emit('call:accepted', { targetUserId: callInfo.targetUserId });
+      const pc = createPC(callInfo.targetUserId, callInfo.callId);
+
+      // Process any SDP offer that arrived before the user hit Accept
+      const pending = pendingOfferRef.current;
+      if (pending && pending.signal.type === 'offer') {
+        await pc.setRemoteDescription(toRTCSessionDescription(pending.signal));
+        // Flush ICE candidates buffered before the remote description was ready
+        for (const c of pendingCandidatesRef.current) {
+          await pc.addIceCandidate(new RTCIceCandidate(c)).catch((e) => console.warn('ICE flush error:', e));
+        }
+        pendingCandidatesRef.current = [];
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket?.emit('call:signal', {
+          targetUserId: pending.fromUserId,
+          callId: pending.callId,
+          signal: { type: 'answer', sdp: answer.sdp },
+        });
+        pendingOfferRef.current = null;
+      }
+
+      socket?.emit('call:accepted', { targetUserId: callInfo.targetUserId, callId: callInfo.callId });
       setCallState('active');
       timerRef.current = setInterval(() => setCallTimer((t) => t + 1), 1000);
     } catch {
@@ -264,10 +335,12 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
     if (!socket) return;
 
     // Someone is calling us
-    const onRinging = ({ fromUserId, callType }: { fromUserId: string; callType: CallType }) => {
+    const onRinging = ({ fromUserId, callType, callId }: { fromUserId: string; callType: CallType; callId?: string }) => {
       if (callState !== 'idle') return; // Already in a call
+      // Use the callId from the caller if provided, otherwise derive one
+      const resolvedCallId = callId ?? `${fromUserId}-${user?.id}-incoming`;
       setCallInfo({
-        callId: `${fromUserId}-${user?.id}`,
+        callId: resolvedCallId,
         targetUserId: fromUserId,
         targetUserName: fromUserId, // Will be replaced by real name when we have contacts
         callType,
@@ -275,9 +348,26 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
       setCallState('ringing');
     };
 
-    // They accepted our outgoing call — nothing extra needed, SDP answer comes via call:signal
-    const onAccepted = () => {
-      // State transitions happen via connectionstatechange
+    // They accepted our outgoing call — now create the PC and send the SDP offer
+    const onAccepted = async ({ fromUserId }: { fromUserId: string }) => {
+      const info = callInfoRef.current;
+      if (!info) return;
+      const socket = getSocket();
+
+      try {
+        const pc = createPC(info.targetUserId, info.callId);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        socket?.emit('call:signal', {
+          targetUserId: info.targetUserId,
+          callId: info.callId,
+          signal: { type: 'offer', sdp: offer.sdp },
+        });
+      } catch (err) {
+        console.error('Failed to create offer after acceptance:', err);
+        teardown();
+      }
     };
 
     const onRejected = () => {
@@ -293,30 +383,44 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
       let pc = pcRef.current;
 
       if (!pc) {
-        // We are the answerer and haven't created a PC yet
-        const stream = localStreamRef.current;
-        if (stream) {
-          pc = createPC(fromUserId, callId);
-        } else {
+        if (signal.type === 'offer') {
+          // Offer arrived before acceptCall was invoked — store it for when the user accepts
+          pendingOfferRef.current = { fromUserId, signal, callId };
           return;
         }
+        // No PC and not an offer — nothing to do
+        return;
       }
 
       try {
         if (signal.type === 'offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          await pc.setRemoteDescription(toRTCSessionDescription(signal));
+          // Flush any ICE candidates that arrived before the remote description
+          for (const c of pendingCandidatesRef.current) {
+            await pc.addIceCandidate(new RTCIceCandidate(c)).catch((e) => console.warn('ICE flush error:', e));
+          }
+          pendingCandidatesRef.current = [];
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           const socket = getSocket();
           socket?.emit('call:signal', {
             targetUserId: fromUserId,
             callId,
-            signal: { type: 'answer', sdp: answer },
+            signal: { type: 'answer', sdp: answer.sdp },
           });
         } else if (signal.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          await pc.setRemoteDescription(toRTCSessionDescription(signal));
+          for (const c of pendingCandidatesRef.current) {
+            await pc.addIceCandidate(new RTCIceCandidate(c)).catch((e) => console.warn('ICE flush error:', e));
+          }
+          pendingCandidatesRef.current = [];
         } else if (signal.type === 'ice' && signal.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          // If the remote description isn't set yet, buffer the candidate
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          } else {
+            pendingCandidatesRef.current.push(signal.candidate);
+          }
         }
       } catch (err) {
         console.warn('WebRTC signal error:', err);
@@ -327,12 +431,14 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
     socket.on('call:accepted', onAccepted);
     socket.on('call:rejected', onRejected);
     socket.on('call:signal', onSignal);
+    socket.on('call:ended', onRejected); // remote hung up → tear down locally
 
     return () => {
       socket.off('call:ringing', onRinging);
       socket.off('call:accepted', onAccepted);
       socket.off('call:rejected', onRejected);
       socket.off('call:signal', onSignal);
+      socket.off('call:ended', onRejected);
     };
   }, [callState, user?.id, createPC, teardown]);
 
@@ -341,8 +447,40 @@ export function CallManagerProvider({ children }: { children: React.ReactNode })
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   return (
-    <CallCtx.Provider value={{ callState, callInfo, startCall }}>
+    <CallCtx.Provider value={{ callState, callInfo, startCall, startGroupCall, endGroupCall }}>
       {children}
+
+      {/* ── GROUP CALL BANNER ── */}
+      {activeGroupCall && callState === 'idle' && (
+        <div className="call-group-banner">
+          <Users className="w-4 h-4 flex-shrink-0" />
+          <span className="call-group-banner-text">
+            Group {activeGroupCall.callType} call in progress
+          </span>
+          <div className="call-group-banner-actions">
+            <button
+              className="call-btn call-accept call-btn-sm"
+              onClick={() => {
+                // Join by navigating to the meeting URL if external, or starting own call
+                if (activeGroupCall.meetingUrl) {
+                  window.open(activeGroupCall.meetingUrl, '_blank');
+                }
+              }}
+              title="Join call"
+            >
+              {activeGroupCall.callType === 'video' ? <Video className="w-4 h-4" /> : <PhoneCall className="w-4 h-4" />}
+              <span style={{ marginLeft: 4 }}>Join</span>
+            </button>
+            <button
+              className="call-group-banner-dismiss"
+              onClick={() => endGroupCall(activeGroupCall.roomId)}
+              title="Dismiss"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── INCOMING CALL OVERLAY ── */}
       {callState === 'ringing' && callInfo && (

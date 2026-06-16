@@ -92,21 +92,33 @@ export async function sendChatMessage(input: SendMessageInput) {
         ),
       );
 
-      // Queue email notifications for mentions (async, won't block response)
+      // Queue email + push notifications for mentions (async, won't block response)
       for (const user of mentionedUsers) {
+        const title = `${created.sender.name} mentioned you in ${chatRoom.name || 'a discussion'}`;
+        const preview = `${created.sender.name} mentioned you: "${created.content.slice(0, 150)}"`;
+        const notifData = {
+          type: 'mention',
+          messageId: created.id,
+          roomId: input.roomId,
+          roomName: chatRoom.name,
+          senderId: input.senderId,
+        };
+
         await addNotificationJob({
           userId: user.id,
           type: 'email',
-          title: `${created.sender.name} mentioned you in ${chatRoom.name || 'a discussion'}`,
-          message: `${created.sender.name} mentioned you: "${created.content.slice(0, 150)}"`,
-          data: {
-            type: 'mention',
-            messageId: created.id,
-            roomId: input.roomId,
-            roomName: chatRoom.name,
-            senderId: input.senderId,
-          },
-        }).catch(err => console.error('Failed to queue mention email:', err));
+          title,
+          message: preview,
+          data: notifData,
+        }).catch((err) => console.error('Failed to queue mention email:', err));
+
+        await addNotificationJob({
+          userId: user.id,
+          type: 'push',
+          title: `${created.sender.name} mentioned you`,
+          message: created.content.slice(0, 150),
+          data: notifData,
+        }).catch((err) => console.error('Failed to queue mention push:', err));
       }
 
       // Log mention events

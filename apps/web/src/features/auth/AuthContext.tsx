@@ -1,6 +1,7 @@
 import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/apiClient';
 import { connectSocket } from '../../lib/socket';
+import { requestPermissionAndRegisterToken, removeDeviceToken, onForegroundMessage } from '../../lib/firebase-messaging';
 
 export interface User {
   id: string;
@@ -10,6 +11,7 @@ export interface User {
   avatarUrl?: string;
   isActive: boolean;
   isVerified: boolean;
+  pushNotificationsEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -19,6 +21,7 @@ export interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   error: string | null;
+  pushNotificationStatus: 'granted' | 'denied' | 'pending' | null;
 
   // Methods
   register: (email: string, password: string, name: string, role?: 'STUDENT' | 'INSTRUCTOR') => Promise<void>;
@@ -33,6 +36,35 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pushNotificationStatus, setPushNotificationStatus] = useState<'granted' | 'denied' | 'pending' | null>(null);
+
+  // Request push notification permission and register FCM token
+  const initializePushNotifications = useCallback(async () => {
+    setPushNotificationStatus('pending');
+    const result = await requestPermissionAndRegisterToken();
+    setPushNotificationStatus(result);
+    if (result === 'denied') {
+      console.warn('[Push Notifications] Push notifications are unavailable — permission denied.');
+    }
+    if (result === 'granted') {
+      // Subscribe to foreground messages so push notifications show up even
+      // when the tab is active. Chrome doesn't auto-show notifications when
+      // the page is focused — we must explicitly call showNotification.
+      onForegroundMessage(async ({ title, body }) => {
+        try {
+          // navigator.serviceWorker.ready resolves only when a SW is active
+          const reg = await navigator.serviceWorker.ready;
+          await reg.showNotification(title, {
+            body,
+            icon: '/logo.png',
+            badge: '/logo.png',
+          });
+        } catch (err) {
+          console.error('[Push] Failed to show foreground notification:', err);
+        }
+      });
+    }
+  }, []);
 
   // Check if user is already logged in on mount
   useEffect(() => {
@@ -61,6 +93,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (response && response.success && response.data) {
             setUser(response.data);
             connectSocket(token);
+            // Initialize push notifications after restoring auth session
+            initializePushNotifications();
           } else {
             localStorage.removeItem('accessToken');
           }
@@ -75,7 +109,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     initAuth();
-  }, []);
+  }, [initializePushNotifications]);
 
   const register = useCallback(async (email: string, password: string, name: string, role?: 'STUDENT' | 'INSTRUCTOR') => {
     setError(null);
@@ -96,6 +130,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Connect to Socket.IO
       connectSocket(tokens.accessToken);
+
+      // Initialize push notifications after successful registration
+      initializePushNotifications();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Registration failed';
       setError(message);
@@ -103,7 +140,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [initializePushNotifications]);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
@@ -124,6 +161,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Connect to Socket.IO
       connectSocket(tokens.accessToken);
+
+      // Initialize push notifications after successful login
+      initializePushNotifications();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
       setError(message);
@@ -131,13 +171,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [initializePushNotifications]);
 
   const logout = useCallback(async () => {
     setError(null);
     setIsLoading(true);
 
     try {
+      // Remove device token before logging out
+      await removeDeviceToken();
       await apiClient.logout();
     } catch (err) {
       console.error('Logout error:', err);
@@ -147,6 +189,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       localStorage.removeItem('refreshToken');
       apiClient.setToken(null);
       setUser(null);
+      setPushNotificationStatus(null);
       setIsLoading(false);
     }
   }, []);
@@ -160,6 +203,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isLoading,
     isAuthenticated: !!user,
     error,
+    pushNotificationStatus,
     register,
     login,
     logout,

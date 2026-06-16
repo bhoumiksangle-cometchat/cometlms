@@ -39,17 +39,41 @@ class _CallScreenState extends State<CallScreen> {
       targetUserId: widget.targetUserId,
       callId: widget.callId,
     );
-    _webrtc.initialize();
+    // Tear down + leave the screen if the other party ends or rejects the call.
+    _socketClient.on('call:ended', _onRemoteEnded);
+    _socketClient.on('call:rejected', _onRemoteEnded);
+    // Initialize WebRTC first, then notify the other party
+    _webrtc.initialize().then((_) {
+      if (widget.isIncoming) {
+        // Tell the caller we accepted — the WebRTC service will create
+        // the offer when it receives 'call:accepted' back from the server.
+        _socketClient.emit('call:accepted', {
+          'targetUserId': widget.targetUserId,
+          'callId': widget.callId,
+        });
+      }
+    });
+  }
 
-    if (widget.isIncoming) {
-      _socketClient.emit('call:accepted', {
-        'targetUserId': widget.targetUserId,
-      });
-    }
+  void _onRemoteEnded(dynamic _) {
+    if (!mounted) return;
+    if (context.canPop()) context.pop();
+  }
+
+  void _hangUp() {
+    _socketClient.emit('call:ended', {
+      'roomId': widget.roomId,
+      'duration': 0,
+      'callId': widget.callId ?? widget.roomId,
+      'targetUserId': widget.targetUserId,
+    });
+    if (context.canPop()) context.pop();
   }
 
   @override
   void dispose() {
+    _socketClient.off('call:ended');
+    _socketClient.off('call:rejected');
     _webrtc.dispose();
     super.dispose();
   }
@@ -143,6 +167,7 @@ class _CallScreenState extends State<CallScreen> {
                   icon: _isMuted ? Icons.mic_off : Icons.mic,
                   color: _isMuted ? AppColors.error : Colors.white12,
                   onPressed: () {
+                    _webrtc.toggleMute();
                     setState(() {
                       _isMuted = !_isMuted;
                     });
@@ -155,6 +180,7 @@ class _CallScreenState extends State<CallScreen> {
                     icon: _isCameraOff ? Icons.videocam_off : Icons.videocam,
                     color: _isCameraOff ? AppColors.error : Colors.white12,
                     onPressed: () {
+                      _webrtc.toggleCamera();
                       setState(() {
                         _isCameraOff = !_isCameraOff;
                       });
@@ -176,14 +202,7 @@ class _CallScreenState extends State<CallScreen> {
                 _buildControlButton(
                   icon: Icons.call_end,
                   color: AppColors.error,
-                  onPressed: () {
-                    _socketClient.emit('call:ended', {
-                      'roomId': widget.roomId,
-                      'duration': 0,
-                      'callId': widget.callId ?? widget.roomId,
-                    });
-                    context.pop();
-                  },
+                  onPressed: _hangUp,
                 ),
               ],
             ),

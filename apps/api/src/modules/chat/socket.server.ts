@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../../server';
 import { sendChatMessage } from './messages';
 import { handleBotMention } from './agents';
+import { addNotificationJob } from '../../lib/queue';
 
 type SocketUser = {
   id: string;
@@ -342,6 +343,22 @@ export function setupSocketServer(io: Server) {
           messageId: result.message.id,
         });
 
+        // Queue a push notification to the recipient so they're alerted even
+        // when the app/tab is not focused. The worker gates on the recipient's
+        // toggle + registered device token, so this is safe to always enqueue.
+        addNotificationJob({
+          userId: otherUserId,
+          type: 'push',
+          title: `New message from ${result.message.sender.name}`,
+          message: content.slice(0, 150),
+          data: {
+            type: 'dm',
+            roomId: room.roomId,
+            messageId: result.message.id,
+            senderId: user.id,
+          },
+        }).catch((err) => console.error('Failed to queue DM push:', err));
+
         if (result.moderation.flagged) {
           io.to(room.roomId).emit('moderation:flagged', {
             messageId: result.message.id,
@@ -378,6 +395,34 @@ export function setupSocketServer(io: Server) {
         
         console.log(`[Socket] Broadcasting message ${result.message.id} to room ${payload.roomId}`);
         io.to(payload.roomId).emit('message:sent', result.message);
+
+        // For DM rooms, send a push notification to the other party so they
+        // get alerted even if the app/tab is backgrounded. For group rooms we
+        // skip push (too noisy) — only mentions trigger push in groups.
+        if (payload.roomId.startsWith('dm-')) {
+          // Find the other user in this DM room
+          const dmRoom = await prisma.chatRoom.findUnique({
+            where: { roomId: payload.roomId },
+            include: { members: { select: { userId: true } } },
+          });
+          if (dmRoom) {
+            const otherMembers = dmRoom.members.filter((m) => m.userId !== user.id);
+            for (const member of otherMembers) {
+              addNotificationJob({
+                userId: member.userId,
+                type: 'push',
+                title: `New message from ${result.message.sender?.name || 'Someone'}`,
+                message: payload.content.slice(0, 150),
+                data: {
+                  type: 'dm',
+                  roomId: payload.roomId,
+                  messageId: result.message.id,
+                  senderId: user.id,
+                },
+              }).catch((err) => console.error('Failed to queue DM push (message:send):', err));
+            }
+          }
+        }
 
         // Send mention notifications to mentioned users
         if (result.mentionedUsers.length > 0) {
@@ -612,9 +657,19 @@ export function setupSocketServer(io: Server) {
       }
     });
 
-    socket.on('call:ended', async ({ roomId, callId, duration, recordingUrl }: { roomId: string; callId: string; duration: number; recordingUrl?: string }) => {
+    socket.on('call:ended', async ({ roomId, callId, duration, recordingUrl, targetUserId }: { roomId: string; callId: string; duration: number; recordingUrl?: string; targetUserId?: string }) => {
       try {
-        io.to(roomId).emit('call:ended', { roomId, callId, endedBy: user.id, duration, recordingUrl, endedAt: new Date().toISOString() });
+        // Group/room calls: notify everyone in the room.
+        if (roomId) {
+          io.to(roomId).emit('call:ended', { roomId, callId, endedBy: user.id, duration, recordingUrl, endedAt: new Date().toISOString() });
+        }
+
+        // 1:1 peer-to-peer calls: the remote peer never joined a Socket.IO room
+        // for the call, so relay the end signal directly to their user channel
+        // to guarantee teardown on the other side.
+        if (targetUserId) {
+          io.to(`user-${targetUserId}`).emit('call:ended', { callId, endedBy: user.id, duration, endedAt: new Date().toISOString() });
+        }
 
         // Log event
         await prisma.activityEventLog.create({
@@ -639,8 +694,8 @@ export function setupSocketServer(io: Server) {
       });
     });
 
-    socket.on('call:accepted', ({ targetUserId }: { targetUserId: string }) => {
-      io.to(`user-${targetUserId}`).emit('call:accepted', { fromUserId: user.id });
+    socket.on('call:accepted', ({ targetUserId, callId }: { targetUserId: string; callId?: string }) => {
+      io.to(`user-${targetUserId}`).emit('call:accepted', { fromUserId: user.id, callId });
     });
 
     socket.on('call:rejected', ({ targetUserId }: { targetUserId: string }) => {

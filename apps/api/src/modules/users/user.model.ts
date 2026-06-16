@@ -10,6 +10,7 @@ export class User {
   role: string;
   isActive: boolean;
   isVerified: boolean;
+  pushNotificationsEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 
@@ -23,6 +24,7 @@ export class User {
     this.role = data.role || 'STUDENT';
     this.isActive = data.isActive ?? true;
     this.isVerified = data.isVerified ?? false;
+    this.pushNotificationsEnabled = data.pushNotificationsEnabled ?? true;
     this.createdAt = data.createdAt || new Date();
     this.updatedAt = data.updatedAt || new Date();
   }

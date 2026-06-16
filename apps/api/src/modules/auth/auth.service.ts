@@ -94,6 +94,7 @@ export class AuthService {
         role: true,
         isActive: true,
         isVerified: true,
+        pushNotificationsEnabled: true,
         createdAt: true,
         updatedAt: true,
       },

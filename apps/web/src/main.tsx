@@ -8,6 +8,13 @@ import { CallManagerProvider } from './features/chat/CallManager';
 import { App } from './pages/index';
 import './styles.css';
 
+// Register Firebase Messaging service worker on app load
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/firebase-messaging-sw.js')
+    .then((registration) => console.log('[SW] Registered:', registration.scope))
+    .catch((error) => console.error('[SW] Registration failed:', error));
+}
+
 const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
