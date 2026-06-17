@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/user.dart';
 import '../network/api_client.dart';
@@ -186,8 +187,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       _pushNotificationService.listenForTokenRefresh();
       _pushNotificationService.configureForegroundHandler();
       _pushNotificationService.configureNotificationTapHandler();
-    } catch (_) {
-      // Push notification setup should not block authentication flow
+    } catch (e) {
+      debugPrint('🔔 [FCM] Push notification setup error: $e');
     }
   }
 }

@@ -21,6 +21,7 @@ void main() async {
 
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    debugPrint('🔥 [Firebase] Initialized successfully');
     // Register background message handler only if Firebase initialized
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   } catch (e) {

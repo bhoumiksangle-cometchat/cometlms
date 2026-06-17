@@ -111,10 +111,22 @@ class PushNotificationService {
   /// Posts the token to `/api/notifications/device-token` with the
   /// appropriate platform identifier ('android' or 'ios').
   Future<void> registerToken() async {
-    final token = await _messaging.getToken();
-    if (token != null) {
-      final platform = Platform.isIOS ? 'ios' : 'android';
-      await _registerTokenWithBackend(token, platform);
+    try {
+      debugPrint('🔔 [FCM] Requesting token...');
+      final token = await _messaging.getToken();
+      debugPrint('🔔 [FCM] Token result: $token');
+      if (token != null) {
+        debugPrint('🔔 FCM TOKEN: $token');
+        final platform = Platform.isIOS ? 'ios' : 'android';
+        await _registerTokenWithBackend(token, platform);
+      } else {
+        debugPrint('🔔 [FCM] Token is null — checking notification permission...');
+        final settings = await _messaging.getNotificationSettings();
+        debugPrint('🔔 [FCM] Auth status: ${settings.authorizationStatus}');
+      }
+    } catch (e, stack) {
+      debugPrint('🔔 [FCM] Error getting token: $e');
+      debugPrint('🔔 [FCM] Stack: $stack');
     }
   }
 
@@ -134,24 +146,30 @@ class PushNotificationService {
   /// When an FCM message arrives while the app is in the foreground,
   /// displays a local notification using [flutter_local_notifications].
   void configureForegroundHandler() {
+    // On Android, FCM does NOT show a heads-up notification when the app is
+    // in the foreground — must display manually via flutter_local_notifications.
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final notification = message.notification;
-      if (notification != null) {
-        _localNotifications.show(
-          notification.hashCode,
-          notification.title,
-          notification.body,
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'default_channel',
-              'Default Notifications',
-              importance: Importance.high,
-              priority: Priority.high,
-            ),
-            iOS: DarwinNotificationDetails(),
+      debugPrint('🔔 [FCM] Foreground message: ${message.notification?.title} / ${message.notification?.body}');
+      debugPrint('🔔 [FCM] Data: ${message.data}');
+
+      final title = message.notification?.title ?? message.data['title'] ?? 'New notification';
+      final body  = message.notification?.body  ?? message.data['body']  ?? '';
+
+      _localNotifications.show(
+        message.hashCode,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'default_channel',
+            'Default Notifications',
+            importance: Importance.max,
+            priority: Priority.high,
+            showWhen: true,
           ),
-        );
-      }
+          iOS: DarwinNotificationDetails(),
+        ),
+      );
     });
   }
 
