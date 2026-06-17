@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:475640851640:android:5c92b95400f6ab7a97d84d",
+        "mobilesdk_app_id": "1:475640851640:android:bfb3ca5af65ad82897d84d",
         "android_client_info": {
-          "package_name": "com.cometlms.app"
+          "package_name": "com.cometchat.interns"
         }
       },
       "oauth_client": [],

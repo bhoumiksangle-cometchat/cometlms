@@ -12,15 +12,9 @@ class ApiClient {
   late final Dio _dio;
   final _storage = const FlutterSecureStorage();
 
-  // Physical device: use your Mac's LAN IP so the phone can reach the API.
-  // Emulator (Android): use 10.0.2.2 which maps to host localhost.
-  // Override at build time with --dart-define=API_BASE_URL=http://x.x.x.x:3000
-  static String get baseUrl {
-    if (deploymentBaseUrl.isNotEmpty) return deploymentBaseUrl;
-    if (kIsWeb) return 'http://localhost:3000';
-    // Physical Android device — use Mac's LAN IP
-    return 'http://192.168.29.247:3000';
-  }
+  // Always points to production. Override at build time if needed:
+  // flutter run --dart-define=API_BASE_URL=http://192.168.x.x:3000
+  static String get baseUrl => deploymentBaseUrl;
 
   ApiClient() {
     _dio = Dio(

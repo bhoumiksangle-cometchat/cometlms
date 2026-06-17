@@ -41,11 +41,11 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyB8Sw6FQYs1mO5bKNIjd5ZIcYwtwrzXLhI',
-    appId: '1:475640851640:ios:cometlms',
+    apiKey: 'AIzaSyC0bSO_MrIf9hcd0spTQZDEBYcCXFtJlp8',
+    appId: '1:475640851640:ios:eae817c407985f9097d84d',
     messagingSenderId: '475640851640',
     projectId: 'cometlms',
     storageBucket: 'cometlms.firebasestorage.app',
-    iosBundleId: 'com.cometlms.app',
+    iosBundleId: 'com.cometchat.interns',
   );
 }

@@ -1,9 +1,11 @@
+import dotenv from 'dotenv';
+dotenv.config(); // Must run before any other imports that read process.env
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import { prisma } from './lib/prisma';
 import { setupSocketServer } from './modules/chat/socket.server';
 import { errorHandler } from './middleware/errorHandler';
@@ -21,16 +23,8 @@ import { callRoutes } from './modules/calls/calls.routes';
 import { processActivityEvents } from './modules/chat/eventProcessor';
 import { scheduleRecurringJob, checkQueueHealth } from './lib/queue';
 import { pushDispatcherService } from './services/push-dispatcher.service';
-import './workers/notification.worker'; // Initialize notification worker
-import './workers/event.worker'; // Initialize event worker
-
-dotenv.config();
-
-// Initialize Firebase Admin for push notifications.
-// Safe to call at module load — dotenv has populated process.env, and in
-// containerized environments the env is injected directly. If credentials are
-// missing the dispatcher self-disables without crashing the server.
-pushDispatcherService.initialize();
+import './workers/notification.worker';
+import './workers/event.worker';
 
 const app = express();
 const httpServer = createServer(app);

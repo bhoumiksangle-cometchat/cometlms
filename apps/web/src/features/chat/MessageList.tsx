@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useChatContext } from './useChatContext';
+import { useAuth } from '../auth/useAuth';
 import type { ChatMessage } from './ChatProvider';
 
 interface MessageListProps {
@@ -46,6 +47,7 @@ interface MessageItemProps {
 
 const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const { addReaction, editMessage, deleteMessage } = useChatContext();
+  const { user } = useAuth();
   const [showActions, setShowActions] = React.useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
 
@@ -55,38 +57,72 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
 
   const COMMON_REACTIONS = ['👍', '❤️', '😂', '🔥', '😢'];
 
+  const isOwn = message.senderId === user?.id;
+  const avatarBg = isOwn ? '#10b981' : '#6b7280';
+
   return (
-    <div 
-      style={{ display: 'flex', gap: 12, padding: 8, borderRadius: 6, position: 'relative' }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#f9fafb';
-        setShowActions(true);
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: isOwn ? 'row-reverse' : 'row',
+        gap: 8,
+        alignItems: 'flex-end',
+        position: 'relative',
       }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
-        setShowActions(false);
-      }}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
     >
       {/* Avatar */}
-      <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 600, flexShrink: 0 }}>
+      <div style={{
+        width: 30,
+        height: 30,
+        borderRadius: '50%',
+        background: avatarBg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff',
+        fontWeight: 600,
+        fontSize: 13,
+        flexShrink: 0,
+        alignSelf: 'flex-end',
+        marginBottom: 2,
+      }}>
         {message.sender?.name?.[0]?.toUpperCase() || '?'}
       </div>
 
-      {/* Message Content */}
-      <div style={{ flex: 1 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontWeight: 600, fontSize: 14, color: '#111827' }}>{message.sender?.name || 'Unknown'}</span>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>{new Date(message.createdAt).toLocaleTimeString()}</span>
-          {message.isEdited && <span style={{ fontSize: 12, color: '#d1d5db' }}>(edited)</span>}
-        </div>
+      {/* Bubble + meta */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: isOwn ? 'flex-end' : 'flex-start',
+        maxWidth: '70%',
+      }}>
+        {/* Sender name (only for others in group chat) */}
+        {!isOwn && (
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 2, paddingLeft: 4 }}>
+            {message.sender?.name || 'Unknown'}
+          </span>
+        )}
 
-        {/* Message text */}
-        <p style={{ fontSize: 14, color: '#374151', margin: '4px 0 0', lineHeight: 1.5 }}>
+        {/* Bubble */}
+        <div style={{
+          padding: '8px 12px',
+          borderRadius: 18,
+          borderBottomRightRadius: isOwn ? 4 : 18,
+          borderBottomLeftRadius: isOwn ? 18 : 4,
+          background: isOwn ? '#10b981' : '#f3f4f6',
+          color: isOwn ? '#fff' : '#1f2937',
+          fontSize: 14,
+          lineHeight: 1.5,
+          wordBreak: 'break-word',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+        }}>
+          {/* Message text */}
           {mentions.length > 0 ? (
             <>
               {mentions.map((mention) => (
-                <span key={mention.id} style={{ fontWeight: 600, color: '#10b981' }}>
+                <span key={mention.id} style={{ fontWeight: 700, color: isOwn ? '#d1fae5' : '#10b981' }}>
                   @{mention.name}{' '}
                 </span>
               ))}
@@ -95,11 +131,27 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           ) : (
             message.content
           )}
-        </p>
+
+          {/* Timestamp inside bubble */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 4,
+            marginTop: 4,
+          }}>
+            {message.isEdited && (
+              <span style={{ fontSize: 10, opacity: 0.7 }}>(edited)</span>
+            )}
+            <span style={{ fontSize: 10, opacity: 0.7, whiteSpace: 'nowrap' }}>
+              {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        </div>
 
         {/* Reactions */}
         {Object.keys(reactions).length > 0 && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
             {Object.entries(reactions).map(([emoji, users]) => (
               <button
                 key={emoji}
@@ -107,15 +159,16 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
-                  background: '#f3f4f6',
-                  border: 'none',
-                  borderRadius: 16,
-                  padding: '4px 8px',
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 12,
+                  padding: '2px 6px',
                   fontSize: 12,
                   cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#e5e7eb')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = '#f3f4f6')}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#f3f4f6')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
                 onClick={() => addReaction(message.id, emoji, message.roomId)}
               >
                 {emoji}
@@ -126,26 +179,23 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
         )}
 
         {/* Read receipts */}
-        {readBy.length > 0 && (
-          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 8 }}>
-            Read by {readBy.length} {readBy.length === 1 ? 'person' : 'people'}
+        {isOwn && readBy.length > 0 && (
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2, paddingRight: 4 }}>
+            ✓✓ {readBy.length}
           </div>
         )}
       </div>
 
-      {/* Message Actions */}
+      {/* Message Actions (shown on hover) */}
       {showActions && (
-        <div style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
-          {/* Emoji Picker Toggle */}
+        <div style={{
+          display: 'flex',
+          gap: 2,
+          alignItems: 'center',
+          alignSelf: 'center',
+        }}>
           <button
-            style={{
-              padding: 4,
-              background: 'none',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 14,
-            }}
+            style={{ padding: 4, background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 14 }}
             onMouseEnter={(e) => (e.currentTarget.style.background = '#e5e7eb')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -153,17 +203,8 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           >
             😊
           </button>
-
-          {/* Edit Button */}
           <button
-            style={{
-              padding: 4,
-              background: 'none',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 12,
-            }}
+            style={{ padding: 4, background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
             onMouseEnter={(e) => (e.currentTarget.style.background = '#e5e7eb')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             onClick={() => {
@@ -174,17 +215,8 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           >
             ✏️
           </button>
-
-          {/* Delete Button */}
           <button
-            style={{
-              padding: 4,
-              background: 'none',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 12,
-            }}
+            style={{ padding: 4, background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
             onMouseEnter={(e) => (e.currentTarget.style.background = '#e5e7eb')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             onClick={() => {
@@ -199,30 +231,23 @@ const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
 
       {/* Emoji Picker */}
       {showEmojiPicker && (
-        <div style={{ 
-          position: 'absolute', 
-          top: '100%', 
-          right: 0, 
-          background: '#fff', 
-          border: '1px solid #e5e7eb', 
-          borderRadius: 8, 
-          boxShadow: '0 4px 6px rgba(0,0,0,0.1)', 
-          padding: 8, 
-          display: 'flex', 
+        <div style={{
+          position: 'absolute',
+          bottom: '100%',
+          [isOwn ? 'right' : 'left']: 0,
+          background: '#fff',
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+          padding: 8,
+          display: 'flex',
           gap: 4,
           zIndex: 10,
         }}>
           {COMMON_REACTIONS.map((emoji) => (
             <button
               key={emoji}
-              style={{
-                fontSize: 20,
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 4,
-                borderRadius: 4,
-              }}
+              style={{ fontSize: 20, background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 4 }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.transform = 'scale(1.25)';
                 e.currentTarget.style.background = '#f3f4f6';

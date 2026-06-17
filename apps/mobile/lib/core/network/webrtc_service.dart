@@ -33,7 +33,9 @@ class WebRTCService {
       {'urls': 'stun:stun1.l.google.com:19302'},
     ];
     try {
-      final res = await ApiClient().get('/api/calls/ice-servers');
+      // Use the shared singleton ApiClient so the auth token is always present.
+      final apiClient = ApiClient();
+      final res = await apiClient.get('/api/calls/ice-servers');
       final data = res.data is Map ? res.data['data'] : null;
       final servers = data is Map ? data['iceServers'] : null;
       if (servers is List && servers.isNotEmpty) {

@@ -51,9 +51,21 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     _socketClient.on('dm:error', _onSocketError);
     _socketClient.on('room:error', _onSocketError);
     _socketClient.on('call:ringing', _onIncomingCall);
-    
-    // Join the chat room via socket
+
+    // Join the room immediately if already connected, otherwise wait for the
+    // connect event. On iOS the WebSocket handshake takes a moment and the
+    // first emit fires before the socket is ready.
+    if (_socketClient.isConnected) {
+      _socketClient.emit('room:join', {'roomId': widget.roomId});
+    } else {
+      _socketClient.on('connect', _onSocketConnected);
+    }
+  }
+
+  void _onSocketConnected(dynamic _) {
     _socketClient.emit('room:join', {'roomId': widget.roomId});
+    // Remove this one-shot listener after the first connect.
+    _socketClient.off('connect', _onSocketConnected);
   }
 
   void _removeSocketListeners() {
@@ -64,6 +76,7 @@ class _ChatRoomScreenState extends ConsumerState<ChatRoomScreen> {
     _socketClient.off('dm:error');
     _socketClient.off('room:error');
     _socketClient.off('call:ringing');
+    _socketClient.off('connect', _onSocketConnected);
   }
 
   void _onSocketError(dynamic data) {
