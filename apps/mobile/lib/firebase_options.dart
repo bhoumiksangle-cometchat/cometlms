@@ -34,7 +34,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAG-KRTWc-BM4Ex1k89ArAQxZI6PnAzIJg',
-    appId: '1:475640851640:android:5c92b95400f6ab7a97d84d',
+    appId: '1:475640851640:android:bfb3ca5af65ad82897d84d',
     messagingSenderId: '475640851640',
     projectId: 'cometlms',
     storageBucket: 'cometlms.firebasestorage.app',
