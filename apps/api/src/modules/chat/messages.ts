@@ -10,23 +10,50 @@ type SendMessageInput = {
   metadata?: Record<string, unknown>;
 };
 
-// Parse @mentions from message content and resolve to user IDs
+// Convert "FAQ Bot" → "faqbot", "Study-Assistant" → "studyassistant", etc.
+// Used to match @mentions like @FAQBot, @faq-bot, @FAQ_BOT against User.name.
+function slugifyHandle(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+// Parse @mentions from message content and resolve to user IDs.
+// Accepts mention handles consisting of letters, digits, hyphens or underscores
+// (e.g. @faq-bot, @FAQBot, @study_assistant). The resolution is slug-based, so
+// `@FAQBot` and `@faq-bot` both match a user whose display name is "FAQ Bot".
 export async function extractMentions(content: string): Promise<{ id: string; name: string }[]> {
-  const mentionRegex = /@(\w+)/g;
+  const mentionRegex = /@([\w-]+)/g;
   const matches = [...content.matchAll(mentionRegex)];
-  const names = matches.map((m) => m[1]);
-  
-  if (names.length === 0) {
+  const handles = Array.from(new Set(matches.map((m) => slugifyHandle(m[1])).filter(Boolean)));
+
+  if (handles.length === 0) {
     return [];
   }
-  
-  // Resolve usernames to actual user IDs
-  const users = await prisma.user.findMany({
-    where: { name: { in: names } },
-    select: { id: true, name: true }
-  }).catch(() => []);
-  
-  return users;
+
+  // Pull a candidate set keyed on the first letter so the slug match isn't a
+  // table scan. AI agent + most user names start with a letter, so this is a
+  // pragmatic prefix narrowing without adding a dedicated handle column.
+  const initialChars = Array.from(new Set(handles.map((h) => h[0])));
+  const candidates = await prisma.user
+    .findMany({
+      where: {
+        OR: initialChars.map((c) => ({ name: { startsWith: c, mode: 'insensitive' as const } })),
+      },
+      select: { id: true, name: true },
+    })
+    .catch(() => [] as { id: string; name: string }[]);
+
+  // Match by slugified name. Multiple users may share a slug — pick the first
+  // (current behavior); a real fix would add a unique handle column.
+  const seen = new Set<string>();
+  const resolved: { id: string; name: string }[] = [];
+  for (const handle of handles) {
+    const hit = candidates.find((u) => slugifyHandle(u.name) === handle);
+    if (hit && !seen.has(hit.id)) {
+      seen.add(hit.id);
+      resolved.push(hit);
+    }
+  }
+  return resolved;
 }
 
 export async function sendChatMessage(input: SendMessageInput) {
@@ -78,7 +105,7 @@ export async function sendChatMessage(input: SendMessageInput) {
           tx.notification.create({
             data: {
               userId: user.id,
-              type: 'in_app',
+              type: 'IN_APP',
               title: `@${created.sender.name} mentioned you`,
               message: created.content.slice(0, 100),
               data: {

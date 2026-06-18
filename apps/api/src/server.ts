@@ -20,11 +20,17 @@ import { notificationRoutes } from './modules/notifications/notification.routes'
 import { adminRoutes } from './modules/admin/admin.routes';
 import { chatRoutes } from './modules/chat/chat.routes';
 import { callRoutes } from './modules/calls/calls.routes';
+import { categoryRoutes } from './modules/categories/categories.routes';
 import { processActivityEvents } from './modules/chat/eventProcessor';
 import { scheduleRecurringJob, checkQueueHealth } from './lib/queue';
 import { pushDispatcherService } from './services/push-dispatcher.service';
 import './workers/notification.worker';
 import './workers/event.worker';
+
+// Initialize Firebase Admin SDK before workers start dispatching push notifications.
+// Worker is imported above and is already wired to skip when isEnabled() is false,
+// but with proper credentials in env this initializes the singleton so dispatch works.
+pushDispatcherService.initialize();
 
 const app = express();
 const httpServer = createServer(app);
@@ -53,7 +59,11 @@ const corsOptions = {
     if (isAllowed) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // Reject the origin without throwing — the cors middleware then omits the
+      // Access-Control-Allow-Origin header and the browser refuses the request.
+      // Throwing here results in a 500 from the Express error handler, which is
+      // both noisier than necessary and confuses CORS preflight diagnosis.
+      callback(null, false);
     }
   },
   credentials: true,
@@ -91,6 +101,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/categories', categoryRoutes);
 
 // Error handling
 app.use(errorHandler);

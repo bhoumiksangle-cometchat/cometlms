@@ -48,11 +48,18 @@ enrollmentRoutes.post('/', requireAuth, async (req, res, next) => {
       });
 
       if (course.chatRoomId) {
-        await tx.chatRoomMember.upsert({
-          where: { roomId_userId: { roomId: course.chatRoomId, userId: req.user!.id } },
-          update: { removedAt: null },
-          create: { roomId: course.chatRoomId, userId: req.user!.id, role: 'member' },
+        // ChatRoomMember.roomId references ChatRoom.id (UUID), not ChatRoom.roomId (string)
+        const chatRoom = await tx.chatRoom.findUnique({
+          where: { roomId: course.chatRoomId },
+          select: { id: true },
         });
+        if (chatRoom) {
+          await tx.chatRoomMember.upsert({
+            where: { roomId_userId: { roomId: chatRoom.id, userId: req.user!.id } },
+            update: { removedAt: null },
+            create: { roomId: chatRoom.id, userId: req.user!.id, role: 'member' },
+          });
+        }
       }
 
       return created;

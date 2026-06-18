@@ -1,6 +1,6 @@
 import { prisma } from '../server';
 import sgMail from '@sendgrid/mail';
-import nodemailer from 'nodemailer';
+import nodemailer, { Transporter } from 'nodemailer';
 import { addNotificationJob } from '../lib/queue';
 
 // Initialize SendGrid (if API key is provided)
@@ -11,12 +11,22 @@ if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
 }
 
-// Fallback to nodemailer for development
-const devTransporter = nodemailer.createTransport({
-  host: 'localhost',
-  port: 1025, // MailHog or similar
-  ignoreTLS: true,
-});
+// Lazy SMTP transporter — only created when SMTP_HOST is explicitly configured.
+// Avoids the worker throwing on every send when no MailHog/SES/etc. is wired up.
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 1025;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+
+let smtpTransporter: Transporter | null = null;
+if (SMTP_HOST) {
+  smtpTransporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    ignoreTLS: SMTP_PORT === 1025,
+    auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+  });
+}
 
 export interface NotificationPayload {
   userId: string;
@@ -25,6 +35,15 @@ export interface NotificationPayload {
   message: string;
   data?: Record<string, any>;
 }
+
+// Map the lowercase application-level type onto the Prisma enum (uppercase).
+// Centralized so the API and queue surface can keep using the cleaner lowercase
+// variant while the database row gets the value Postgres actually accepts.
+const PRISMA_TYPE: Record<NotificationPayload['type'], 'EMAIL' | 'PUSH' | 'IN_APP'> = {
+  email: 'EMAIL',
+  push: 'PUSH',
+  in_app: 'IN_APP',
+};
 
 export class NotificationService {
   /**
@@ -37,7 +56,7 @@ export class NotificationService {
     const notification = await prisma.notification.create({
       data: {
         userId,
-        type,
+        type: PRISMA_TYPE[type],
         title,
         message,
         data: data || {},
@@ -93,17 +112,26 @@ export class NotificationService {
           html: emailContent,
         });
         console.log(`[NotificationService] SendGrid email sent to ${user.email}`);
-      } else {
-        // Use nodemailer (development)
-        await devTransporter.sendMail({
+        return;
+      }
+
+      if (smtpTransporter) {
+        await smtpTransporter.sendMail({
           from: SENDGRID_FROM_EMAIL,
           to: user.email,
           subject: title,
           text: message,
           html: emailContent,
         });
-        console.log(`[NotificationService] Dev email sent to ${user.email}`);
+        console.log(`[NotificationService] SMTP email sent to ${user.email}`);
+        return;
       }
+
+      // No email backend configured — log and move on rather than failing the job.
+      // The Notification row is already persisted, so users can still see in-app.
+      console.warn(
+        `[NotificationService] No email backend configured (SENDGRID_API_KEY/SMTP_HOST unset); skipping email to ${user.email}`,
+      );
     } catch (error) {
       console.error('[NotificationService] Email error:', error);
       throw error;

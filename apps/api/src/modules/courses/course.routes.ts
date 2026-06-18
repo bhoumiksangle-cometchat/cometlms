@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { prisma } from '../../server';
+import { addNotificationJob } from '../../lib/queue';
 
 export const courseRoutes = Router();
 
@@ -132,14 +133,20 @@ const courseSchema = z.object({
   thumbnailUrl: z.string().url().optional().or(z.literal('')),
 });
 
-courseRoutes.get('/', async (_req, res, next) => {
+courseRoutes.get('/', async (req, res, next) => {
   if (isDevMode()) {
     res.json({ success: true, data: MOCK_COURSES });
     return;
   }
   try {
+    // Always show PUBLISHED courses; also include the requester's own DRAFT courses
+    const userId = (req as any).user?.id as string | undefined;
+    const where: any = userId
+      ? { OR: [{ status: 'PUBLISHED' }, { instructorId: userId }] }
+      : { status: 'PUBLISHED' };
+
     const courses = await prisma.course.findMany({
-      where: { status: 'PUBLISHED' },
+      where,
       include: { instructor: { select: { id: true, name: true, avatarUrl: true } }, category: true },
       orderBy: { publishedAt: 'desc' },
     });
@@ -213,11 +220,40 @@ courseRoutes.post('/', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_AD
   }
   try {
     const input = courseSchema.parse(req.body);
-    const course = await prisma.course.create({
-      data: {
-        ...input,
-        instructorId: req.user!.id,
-      },
+
+    // Create the course as PUBLISHED immediately and spin up a chat room so
+    // discussion/Q&A work right away — all in a single transaction.
+    const course = await prisma.$transaction(async (tx) => {
+      const newCourse = await tx.course.create({
+        data: {
+          ...input,
+          instructorId: req.user!.id,
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+        },
+      });
+
+      const roomKey = `course-${newCourse.id}`;
+      await tx.chatRoom.create({
+        data: {
+          roomId: roomKey,
+          name: `${newCourse.title} — Discussion`,
+          type: 'GROUP',
+          ownerId: newCourse.instructorId,
+          isActive: true,
+          members: { create: { userId: newCourse.instructorId, role: 'owner' } },
+        },
+      });
+
+      return tx.course.update({
+        where: { id: newCourse.id },
+        data: { chatRoomId: roomKey },
+        include: {
+          instructor: { select: { id: true, name: true, avatarUrl: true } },
+          category: true,
+          sections: { include: { lessons: true } },
+        },
+      });
     });
 
     res.status(201).json({ success: true, data: course });
@@ -270,13 +306,39 @@ courseRoutes.post('/:id/publish', requireAuth, requireRole('INSTRUCTOR', 'ADMIN'
         data: {
           status: 'PUBLISHED',
           publishedAt: new Date(),
-          chatRoomId: room.roomId,
+          chatRoomId: room.roomId, // FK references ChatRoom.room_id (see migration SQL)
         },
         include: { chatRoom: true },
       });
     });
 
     res.json({ success: true, data: published });
+
+    // Fire-and-forget: push to all enrolled students so they know the course is live.
+    // The worker gates on each user's pushNotificationsEnabled flag + device token,
+    // so it's safe to enqueue for every enrolled user without extra checks here.
+    prisma.enrollment.findMany({
+      where: { courseId: published.id },
+      select: { userId: true },
+    }).then((enrollments) => {
+      for (const { userId } of enrollments) {
+        addNotificationJob({
+          userId,
+          type: 'push',
+          title: 'New course published!',
+          message: `"${published.title}" is now live and ready to explore.`,
+          data: {
+            type: 'course_published',
+            courseId: published.id,
+            courseTitle: published.title,
+          },
+        }, { priority: 3 }).catch((err) =>
+          console.error('[Push] Failed to queue course-published push:', err)
+        );
+      }
+    }).catch((err) =>
+      console.error('[Push] Failed to fetch enrollments for course-published push:', err)
+    );
   } catch (error) {
     next(error);
   }

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState, useCallback } from 'react';
-import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, Navigate } from 'react-router-dom';
 import { LoginPage, RegisterPage } from '../features/auth/AuthPages';
 import { useAuth } from '../features/auth/useAuth';
 import {
@@ -8,14 +8,16 @@ import {
   CheckCircle2,
   Clock3,
   GraduationCap,
+  HelpCircle,
   LayoutDashboard,
   MessageSquare,
-  Mic,
   MonitorUp,
   Phone,
   PhoneCall,
   PlayCircle,
+  RefreshCw,
   Search,
+  Send,
   ShieldAlert,
   Smartphone,
   Sparkles,
@@ -23,8 +25,9 @@ import {
   Video,
 } from 'lucide-react';
 import { useAppStore, type WorkspaceView } from '../stores';
-import { CourseList, CourseDetail, LessonViewer, CourseDiscussion as CourseDiscussionPage } from '../features/courses';
+import { CourseList, CourseDetail, LessonViewer, CourseDiscussion as CourseDiscussionPage, CourseQnA } from '../features/courses';
 import CreateCourse from '../features/courses/CreateCourse';
+import { AdminUsersPage } from '../features/admin';
 import DirectMessagesPage from '../features/chat/DirectMessagesPage';
 import { DiagnosticPage } from './DiagnosticPage';
 import { DownloadPage } from './DownloadPage';
@@ -83,6 +86,7 @@ export function App() {
         <Route path="/student" element={<RoleGuard roles={['STUDENT']}><AppLayout><StudentDashboard onNotice={() => {}} /></AppLayout></RoleGuard>} />
         <Route path="/instructor" element={<RoleGuard roles={['INSTRUCTOR']}><AppLayout><InstructorDashboard onNotice={() => {}} /></AppLayout></RoleGuard>} />
         <Route path="/admin" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminDashboard onNotice={() => {}} /></AppLayout></RoleGuard>} />
+        <Route path="/admin/users" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminUsersPage /></AppLayout></RoleGuard>} />
         <Route path="/courses" element={isAuthenticated ? <AppLayout><CourseList /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/create" element={isAuthenticated ? <AppLayout><CreateCourse /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/messages" element={isAuthenticated ? <AppLayout><DirectMessagesPage /></AppLayout> : <Navigate to='/login' replace />} />
@@ -109,7 +113,7 @@ function RoleGuard({ roles, children }: { roles: string[]; children: React.React
 
 function DashboardSwitcher() {
   const { user } = useAuth();
-  const [notice, setNotice] = useState('Backend not checked yet');
+  const [notice, setNotice] = useState('');
 
   if (user?.role === 'STUDENT') return <StudentDashboard onNotice={setNotice} />;
   if (user?.role === 'INSTRUCTOR') return <InstructorDashboard onNotice={setNotice} />;
@@ -121,7 +125,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const activeCourse = courses[0];
-  const [notice, setNotice] = useState('Backend not checked yet');
+  const [notice, setNotice] = useState('');
   const [showNotificationStatus, setShowNotificationStatus] = useState(false);
   const { startCall } = useCallManager();
 
@@ -172,15 +176,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             <Smartphone />
             <span>Mobile App</span>
           </button>
+          {(user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+            <button className="nav-button" onClick={() => navigate('/admin/users')}>
+              <Users />
+              <span>Users</span>
+            </button>
+          )}
         </nav>
-        <div className="sidebar-card">
-          <span className="eyebrow">Live office hours</span>
-          <strong>React Foundations</strong>
-          <p>23 students waiting, recording enabled.</p>
-          <button className="icon-button" aria-label="Join live session" title="Join live session">
-            <Video aria-hidden />
-          </button>
-        </div>
+
       </aside>
 
       <section className="workspace">
@@ -219,7 +222,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
-        <div className="notice-bar" role="status">{notice}</div>
+        {notice && <div className="notice-bar" role="status">{notice}</div>}
         
         {children}
       </section>
@@ -237,14 +240,204 @@ function NavButton(props: { icon: React.ReactNode; label: WorkspaceView | 'Stude
 }
 
 function StudentDashboard({ onNotice }: { onNotice: (message: string) => void }) {
+  const { activeCourseId, setActiveCourseId } = useAppStore();
+  const navigate = useNavigate();
+  const [enrolledCourses, setEnrolledCourses] = useState<any[]>([]);
+  const [activeCourse, setActiveCourse] = useState<any>(null);
+
+  // Load real enrolled (or published) courses on mount so Discussion / Q&A
+  // use the correct chatRoomId from the database rather than a hardcoded mock.
+  useEffect(() => {
+    const load = async () => {
+      try {
+        // 1. Try the user's own enrollments first
+        const enrollRes = await apiClient.get('/api/enrollments/me');
+        const enrollRaw = enrollRes?.data ?? enrollRes;
+        const enrollData = enrollRaw?.data ?? enrollRaw;
+        let courses: any[] = Array.isArray(enrollData)
+          ? enrollData
+              .map((e: any) => {
+                // Enrollment API returns { course: {...}, courseId, ... }
+                // Normalise to just the course object
+                const c = e?.course ?? e;
+                return c?.id ? c : null;
+              })
+              .filter(Boolean)
+          : [];
+
+        // 2. Fall back to all published courses (dev mode / no enrollments yet)
+        if (courses.length === 0) {
+          const cRes = await apiClient.getCourses();
+          const cRaw = cRes?.data ?? cRes;
+          const cData = (cRaw as any)?.data ?? cRaw;
+          courses = Array.isArray(cData) ? cData : [];
+        }
+
+        if (courses.length > 0) {
+          setEnrolledCourses(courses);
+          // Keep the previously selected course if it's still in the list
+          const kept = courses.find((c: any) => c.id === activeCourseId) ?? courses[0];
+          setActiveCourse(kept);
+          setActiveCourseId(kept.id);
+        }
+      } catch {
+        // Silently fall through — CoursePlayer still works with the store default
+      }
+    };
+    load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSelectCourse = (course: any) => {
+    setActiveCourse(course);
+    setActiveCourseId(course.id);
+  };
+
   return (
     <div className="content-grid">
       <section className="primary-panel">
-        <LiveBanner onNotice={onNotice} />
-        <CoursePlayer />
+        {/* ── Course switcher (only when enrolled in > 1 course) ── */}
+        {enrolledCourses.length > 1 && (
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 14, paddingBottom: 2 }}>
+            {enrolledCourses.map((item: any) => {
+              const c: any = item?.course ?? item;
+              const cId: string = c?.id ?? item?.courseId ?? '';
+              const cTitle: string = c?.title ?? cId;
+              if (!cId) return null;
+              return (
+                <button
+                  key={cId}
+                  onClick={() => {
+                    const course = item?.course ?? item;
+                    course.id = cId; // ensure id is set
+                    handleSelectCourse({ ...course, id: cId, title: cTitle });
+                  }}
+                  style={{
+                    padding: '6px 16px',
+                    borderRadius: 20,
+                    border: 'none',
+                    background: cId === activeCourse?.id ? '#10b981' : '#e5e7eb',
+                    color: cId === activeCourse?.id ? '#fff' : '#374151',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  {cTitle}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <CoursePlayer
+          activeCourse={activeCourse}
+          onOpenDiscussion={(courseId) => navigate(`/courses/${courseId}/discussion`)}
+          onOpenQnA={(courseId) => navigate(`/courses/${courseId}/discussion?tab=qna`)}
+        />
       </section>
+
       <aside className="stack">
         <AiStudyAssistant onNotice={onNotice} />
+
+        {/* ── Course Community quick-links ── */}
+        {enrolledCourses.length > 0 && (
+          <section className="panel">
+            <div className="panel-title">
+              <MessageSquare aria-hidden />
+              <h2>Course Community</h2>
+            </div>
+            <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6b7280' }}>
+              Jump into the live chat or ask a question in any of your courses.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {enrolledCourses.slice(0, 4).map((item: any) => {
+                // item can be a course object or an enrollment wrapping a course —
+                // normalise to a course object and extract a reliable course ID.
+                const course: any = item?.course ?? item;
+                const courseId: string = course?.id ?? item?.courseId ?? '';
+                const courseTitle: string = course?.title ?? courseId;
+                if (!courseId) return null;
+                return (
+                  <div
+                    key={courseId}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      padding: '8px 0',
+                      borderBottom: '1px solid #f3f4f6',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#111827',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        flex: 1,
+                      }}
+                      title={courseTitle}
+                    >
+                      {courseTitle}
+                    </span>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <Link
+                        to={`/courses/${courseId}/discussion`}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          padding: '5px 10px',
+                          background: '#ecfdf5',
+                          border: '1px solid #a7f3d0',
+                          color: '#047857',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textDecoration: 'none',
+                        }}
+                        title="Live Discussion"
+                      >
+                        <MessageSquare size={12} />
+                        Chat
+                      </Link>
+                      <Link
+                        to={`/courses/${courseId}/discussion?tab=qna`}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          padding: '5px 10px',
+                          background: '#eff6ff',
+                          border: '1px solid #bfdbfe',
+                          color: '#1d4ed8',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textDecoration: 'none',
+                        }}
+                        title="Q&A"
+                      >
+                        <HelpCircle size={12} />
+                        Q&amp;A
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <DirectMessages />
       </aside>
     </div>
@@ -256,7 +449,7 @@ function InstructorDashboard({ onNotice }: { onNotice: (message: string) => void
     <div className="content-grid">
       <section className="primary-panel">
         <KpiRow />
-        <QAManager />
+        <QAManager onNotice={onNotice} />
         <DiscussionManager onNotice={onNotice} />
       </section>
       <aside className="stack">
@@ -278,7 +471,6 @@ function AdminDashboard({ onNotice }: { onNotice: (message: string) => void }) {
       </section>
       <aside className="stack">
         <AgentConfig onNotice={onNotice} />
-        <CourseProgress />
       </aside>
     </div>
   );
@@ -328,180 +520,331 @@ function AuthPanel({ onNotice }: { onNotice: (message: string) => void }) {
   );
 }
 
-function LiveBanner({ onNotice }: { onNotice: (message: string) => void }) {
-  return (
-    <div className="live-banner">
-      <div>
-        <span className="eyebrow">Instructor is live</span>
-        <strong>Office hours are open for lesson 4 questions.</strong>
-      </div>
-      <div className="button-row">
-        <button className="icon-button" aria-label="Join video" title="Join video" onClick={() => onNotice('Joined video office hours')}>
-          <Video aria-hidden />
-        </button>
-        <button className="icon-button" aria-label="Join audio" title="Join audio" onClick={() => onNotice('Joined audio office hours')}>
-          <Mic aria-hidden />
-        </button>
-      </div>
-    </div>
-  );
+// ── Per-course fallback YouTube video IDs (used when lesson.videoUrl is null in dev mode) ──
+const COURSE_FALLBACK_VIDEOS: Record<string, string[]> = {
+  'course-react-foundations': ['Tn6-PIqc4UM', 'TNhaISOUy6Q', 'O6P86uwfdR0', 'IkMND33x0qQ', 'dpw9EHDh2bM'],
+  'course-node-api':          ['fBNz5xF-Kx4', 'ENrzD9HAZK4', 'Oe421EPjeBE', 'qwfE7fSVaZM', 'TlB_eWDSMt4'],
+  'course-design-systems':    ['RGKi6LSPDLU', 'NJJ-xFMPgrQ', 'EK-pHkc5EL4', 'ByUq6SzB98g', 'YiLBFBGnZvo'],
+};
+
+function youTubeIdFromUrl(url: string): string | null {
+  const m = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([A-Za-z0-9_-]{11})/);
+  return m?.[1] ?? null;
 }
 
-function CoursePlayer() {
-  const [tab, setTab] = useState<'video' | 'discussion' | 'qa'>('video');
-  const [currentLesson, setCurrentLesson] = useState(0);
+function videoIdForLesson(lesson: any, courseId: string, idx: number): string {
+  if (lesson?.videoUrl) {
+    const id = youTubeIdFromUrl(lesson.videoUrl);
+    if (id) return id;
+  }
+  const pool = COURSE_FALLBACK_VIDEOS[courseId] ?? COURSE_FALLBACK_VIDEOS['course-react-foundations'];
+  return pool[idx % pool.length];
+}
 
-  // Sample lessons with YouTube video IDs
-  const lessons = [
-    {
-      id: 1,
-      title: 'Introduction to React',
-      videoId: 'Tn6-PIqc4UM', // React in 100 Seconds
-      duration: '2:10',
-      description: 'Learn the fundamentals of React and component-based architecture'
-    },
-    {
-      id: 2,
-      title: 'React Hooks Deep Dive',
-      videoId: 'TNhaISOUy6Q', // React Hooks
-      duration: '14:27',
-      description: 'Master useState, useEffect, and custom hooks'
-    },
-    {
-      id: 3,
-      title: 'State Management',
-      videoId: 'O6P86uwfdR0', // State Management
-      duration: '8:53',
-      description: 'Understand state management patterns in React'
-    },
-    {
-      id: 4,
-      title: 'Forms and Validation',
-      videoId: 'IkMND33x0qQ', // React Forms
-      duration: '12:35',
-      description: 'Build forms with validation and error handling'
-    }
-  ];
+function fmtDuration(secs: number): string {
+  const m = Math.floor((secs || 0) / 60);
+  const s = (secs || 0) % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
-  const lesson = lessons[currentLesson];
+function CoursePlayer({
+  activeCourse,
+  onOpenDiscussion,
+  onOpenQnA,
+}: {
+  activeCourse?: any;
+  onOpenDiscussion?: (courseId: string) => void;
+  onOpenQnA?: (courseId: string) => void;
+}) {
+  const [tab,            setTab]            = useState<'video' | 'discussion' | 'qa'>('video');
+  const [lessons,        setLessons]        = useState<any[]>([]);
+  const [currentLesson,  setCurrentLesson]  = useState(0);
+  const [loadingLessons, setLoadingLessons] = useState(false);
+
+  // Whenever the active course changes, fetch its sections/lessons and reset view
+  useEffect(() => {
+    if (!activeCourse?.id) return;
+    setCurrentLesson(0);
+    setTab('video');
+    setLoadingLessons(true);
+
+    apiClient
+      .get(`/api/courses/${activeCourse.id}`)
+      .then((res) => {
+        const raw    = res?.data ?? res;
+        const course = (raw?.data ?? raw) as any;
+        const flat: any[] = (course?.sections ?? []).flatMap((s: any) =>
+          (s.lessons ?? [])
+            .sort((a: any, b: any) => a.order - b.order)
+            .map((l: any) => ({ ...l, sectionTitle: s.title })),
+        );
+        setLessons(flat);
+      })
+      .catch(() => setLessons([]))
+      .finally(() => setLoadingLessons(false));
+  }, [activeCourse?.id]);
+
+  const lesson  = lessons[currentLesson] ?? null;
+  const videoId = lesson ? videoIdForLesson(lesson, activeCourse?.id ?? '', currentLesson) : null;
+  const roomId  = activeCourse?.chatRoomId || `course-${activeCourse?.id || 'react-foundations'}`;
 
   return (
     <section className="panel">
-      {/* Video Player */}
-      <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', background: '#000', borderRadius: '8px 8px 0 0' }}>
-        <iframe
-          src={`https://www.youtube.com/embed/${lesson.videoId}?rel=0&modestbranding=1`}
-          title={lesson.title}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            border: 'none'
-          }}
-        />
-      </div>
-
-      {/* Lesson Info */}
-      <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb' }}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 700, color: '#111827' }}>
-          Lesson {lesson.id}. {lesson.title}
-        </h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: '14px', color: '#6b7280' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Clock3 size={16} />
-            {lesson.duration}
-          </span>
-          <span>{lesson.description}</span>
+      {/* Course title bar */}
+      {activeCourse && (
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid #e5e7eb' }}>
+          <h3 style={{ margin: '0 0 2px', fontSize: 17, fontWeight: 700, color: '#111827' }}>
+            {activeCourse.title}
+          </h3>
+          {activeCourse.instructor?.name && (
+            <span style={{ fontSize: 13, color: '#6b7280' }}>by {activeCourse.instructor.name}</span>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* Lesson Selector */}
-      <div style={{ padding: '12px 16px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-        <div style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', marginBottom: 8 }}>COURSE CONTENT</div>
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
-          {lessons.map((l, idx) => (
-            <button
-              key={l.id}
-              onClick={() => setCurrentLesson(idx)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 8,
-                border: 'none',
-                background: currentLesson === idx ? '#10b981' : '#fff',
-                color: currentLesson === idx ? '#fff' : '#374151',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                boxShadow: currentLesson === idx ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                if (currentLesson !== idx) {
-                  e.currentTarget.style.background = '#f3f4f6';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (currentLesson !== idx) {
-                  e.currentTarget.style.background = '#fff';
-                }
-              }}
-            >
-              Lesson {l.id}
-            </button>
-          ))}
+      {/* Loading */}
+      {loadingLessons && (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
+          <div style={{ width: 26, height: 26, border: '2px solid #e5e7eb', borderTopColor: '#10b981', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 10px' }} />
+          Loading lessons…
         </div>
-      </div>
+      )}
+
+      {/* Video player */}
+      {!loadingLessons && videoId && (
+        <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', background: '#000' }}>
+          <iframe
+            key={videoId}
+            src={`https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1`}
+            title={lesson?.title ?? 'Lesson'}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+          />
+        </div>
+      )}
+
+      {/* Lesson meta */}
+      {!loadingLessons && lesson && (
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid #e5e7eb' }}>
+          <h4 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: '#111827' }}>
+            {lesson.title}
+          </h4>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 13, color: '#6b7280', flexWrap: 'wrap' }}>
+            {lesson.duration > 0 && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Clock3 size={14} aria-hidden /> {fmtDuration(lesson.duration)}
+              </span>
+            )}
+            {lesson.sectionTitle && <span>{lesson.sectionTitle}</span>}
+            {lesson.isFree === false && (
+              <span style={{ padding: '2px 8px', borderRadius: 999, background: '#fef9c3', color: '#92400e', fontSize: 11, fontWeight: 700 }}>
+                Premium
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lesson selector */}
+      {!loadingLessons && lessons.length > 0 && (
+        <div style={{ padding: '10px 16px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Course Content · {lessons.length} lesson{lessons.length !== 1 ? 's' : ''}
+          </div>
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+            {lessons.map((l, idx) => (
+              <button
+                key={l.id}
+                onClick={() => setCurrentLesson(idx)}
+                title={l.title}
+                style={{
+                  padding: '7px 13px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: currentLesson === idx ? '#10b981' : '#fff',
+                  color:      currentLesson === idx ? '#fff'     : '#374151',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  maxWidth: 180,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  flexShrink: 0,
+                  boxShadow: currentLesson === idx ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                  transition: 'background 0.15s, color 0.15s',
+                }}
+                onMouseEnter={(e) => { if (currentLesson !== idx) e.currentTarget.style.background = '#f3f4f6'; }}
+                onMouseLeave={(e) => { if (currentLesson !== idx) e.currentTarget.style.background = '#fff'; }}
+              >
+                {idx + 1}. {l.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* No lessons yet */}
+      {!loadingLessons && lessons.length === 0 && activeCourse && (
+        <div style={{ padding: '28px 18px', textAlign: 'center', color: '#9ca3af', fontSize: 14 }}>
+          No lessons published yet for this course.
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="tabs" role="tablist">
         {(['video', 'discussion', 'qa'] as const).map((item) => (
           <button key={item} className={tab === item ? 'selected' : ''} onClick={() => setTab(item)}>
-            {item === 'video' ? 'Notes' : item}
+            {item === 'video' ? 'Notes' : item === 'qa' ? 'Q&A' : 'Discussion'}
           </button>
         ))}
       </div>
 
-      {/* Tab Content */}
+      {/* Notes tab */}
       {tab === 'video' && (
         <div style={{ padding: 16 }}>
-          <h4 style={{ margin: '0 0 12px 0', fontSize: 16, fontWeight: 600, color: '#111827' }}>Lesson Notes</h4>
-          <div style={{ fontSize: 14, color: '#4b5563', lineHeight: 1.6 }}>
-            <p style={{ marginBottom: 12 }}>
-              <strong>Key Concepts:</strong>
+          {lesson ? (
+            <>
+              <h4 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 700, color: '#111827' }}>
+                Lesson Notes
+              </h4>
+              <div style={{ fontSize: 14, color: '#4b5563', lineHeight: 1.7 }}>
+                {lesson.description
+                  ? <p style={{ margin: 0 }}>{lesson.description}</p>
+                  : <p style={{ margin: 0, color: '#9ca3af' }}>No notes available for this lesson.</p>
+                }
+                {lesson.sectionTitle && (
+                  <p style={{ marginTop: 14, padding: '10px 14px', background: '#f0fdf4', borderLeft: '3px solid #10b981', borderRadius: 4, fontSize: 13 }}>
+                    <strong>Section:</strong> {lesson.sectionTitle}
+                  </p>
+                )}
+              </div>
+            </>
+          ) : (
+            <p style={{ color: '#9ca3af', fontSize: 14 }}>
+              {loadingLessons ? 'Loading…' : 'Select a lesson above to view notes.'}
             </p>
-            <ul style={{ marginLeft: 20, marginBottom: 16 }}>
-              <li>Component-based architecture</li>
-              <li>JSX syntax and rendering</li>
-              <li>Props and state management</li>
-              <li>Event handling in React</li>
-            </ul>
-            <p style={{ marginBottom: 12 }}>
-              <strong>Practice Exercise:</strong>
-            </p>
-            <p style={{ padding: 12, background: '#f0fdf4', borderLeft: '3px solid #10b981', borderRadius: 4, fontSize: 13 }}>
-              Build a simple counter component that increments and decrements a value. Use the useState hook to manage the counter state.
-            </p>
-          </div>
+          )}
         </div>
       )}
-      {tab === 'discussion' && <CourseDiscussion />}
-      {tab === 'qa' && <QAManager compact />}
+
+      {/* Discussion tab */}
+      {tab === 'discussion' && (
+        <CourseDiscussionWidget
+          roomId={roomId}
+          courseName={activeCourse?.title}
+          onOpenFull={onOpenDiscussion && activeCourse ? () => onOpenDiscussion(activeCourse.id) : undefined}
+        />
+      )}
+
+      {/* Q&A tab */}
+      {tab === 'qa' && (
+        <StudentQnAWidget
+          roomId={roomId}
+          onOpenFull={onOpenQnA && activeCourse ? () => onOpenQnA(activeCourse.id) : undefined}
+        />
+      )}
     </section>
   );
 }
 
-function CourseDiscussion() {
-  const { activeCourseId } = useAppStore();
-  const roomId = `course-${activeCourseId}`;
-  
+// ── Inline Discussion widget (used inside CoursePlayer on the student home page) ───────
+function CourseDiscussionWidget({
+  roomId,
+  courseName,
+  onOpenFull,
+}: {
+  roomId: string;
+  courseName?: string;
+  onOpenFull?: () => void;
+}) {
   return (
-    <div style={{ height: '450px' }}>
-      <ChatWindow roomId={roomId} roomName="Course Discussion Group" />
+    <div style={{ display: 'flex', flexDirection: 'column', height: 480 }}>
+      {/* "Open full page" bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '6px 14px',
+          borderBottom: '1px solid #e5e7eb',
+          background: '#f9fafb',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <MessageSquare size={13} /> Live Discussion
+        </span>
+        {onOpenFull && (
+          <button
+            onClick={onOpenFull}
+            style={{
+              fontSize: 12,
+              color: '#10b981',
+              fontWeight: 600,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            Open full page →
+          </button>
+        )}
+      </div>
+      <div style={{ flex: 1, overflow: 'hidden' }}>
+        <ChatWindow roomId={roomId} roomName={`${courseName || 'Course'} — Discussion`} />
+      </div>
+    </div>
+  );
+}
+
+// ── Inline Q&A widget (used inside CoursePlayer on the student home page) ────────────
+function StudentQnAWidget({
+  roomId,
+  onOpenFull,
+}: {
+  roomId: string;
+  onOpenFull?: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 480 }}>
+      {/* "Open full page" bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '6px 14px',
+          borderBottom: '1px solid #e5e7eb',
+          background: '#f9fafb',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <HelpCircle size={13} /> Questions &amp; Answers
+        </span>
+        {onOpenFull && (
+          <button
+            onClick={onOpenFull}
+            style={{
+              fontSize: 12,
+              color: '#10b981',
+              fontWeight: 600,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            Open full page →
+          </button>
+        )}
+      </div>
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <CourseQnA roomId={roomId} />
+      </div>
     </div>
   );
 }
@@ -734,36 +1077,343 @@ function KpiRow() {
   );
 }
 
-function QAManager({ compact = false }: { compact?: boolean }) {
+function QAManager({ compact = false, onNotice }: { compact?: boolean; onNotice?: (msg: string) => void }) {
+  const { activeCourseId } = useAppStore();
+  const { user } = useAuth();
+  const roomId = `course-${activeCourseId}`;
+
+  const [questions,   setQuestions]   = useState<any[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [expandedId,  setExpandedId]  = useState<string | null>(null);
+  const [answerTexts, setAnswerTexts] = useState<Record<string, string>>({});
+  const [submitting,  setSubmitting]  = useState<Record<string, boolean>>({});
+
+  const isStaffReply = (r: any) =>
+    ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(r.sender?.role);
+
+  const needsResponse = (q: any) => !q.replies?.some(isStaffReply);
+
+  const relTime = (iso: string) => {
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1)  return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res  = await apiClient.getQuestions(roomId);
+      const data = res?.data ?? res;
+      setQuestions(Array.isArray(data) ? data : []);
+    } catch {
+      setQuestions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [roomId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAnswer = async (questionId: string) => {
+    const content = (answerTexts[questionId] ?? '').trim();
+    if (!content) return;
+    setSubmitting((p) => ({ ...p, [questionId]: true }));
+    try {
+      const res       = await apiClient.postAnswer(roomId, questionId, content);
+      const newAnswer = res?.data ?? res;
+      setQuestions((prev) =>
+        prev.map((q) =>
+          q.id === questionId
+            ? { ...q, replies: [...(q.replies ?? []), { ...newAnswer, sender: user }] }
+            : q,
+        ),
+      );
+      setAnswerTexts((p) => ({ ...p, [questionId]: '' }));
+      setExpandedId(null);
+      onNotice?.('Answer posted successfully');
+    } catch {
+      onNotice?.('Failed to post answer — please try again');
+    } finally {
+      setSubmitting((p) => ({ ...p, [questionId]: false }));
+    }
+  };
+
+  const unanswered = questions.filter(needsResponse);
+  const displayed  = compact ? unanswered.slice(0, 1) : unanswered.slice(0, 5);
+
   return (
     <section className="panel">
-      <div className="panel-title">
-        <MessageSquare aria-hidden />
-        <h2>Q&A Manager</h2>
+      <div className="panel-title" style={{ justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <HelpCircle aria-hidden />
+          <h2>Q&amp;A Manager</h2>
+        </div>
+        {!compact && (
+          <button
+            className="icon-button"
+            style={{ width: 30, height: 30 }}
+            title="Refresh questions"
+            aria-label="Refresh questions"
+            onClick={load}
+            disabled={loading}
+          >
+            <RefreshCw
+              aria-hidden
+              style={{ width: 14, height: 14, animation: loading ? 'spin 1s linear infinite' : 'none' }}
+            />
+          </button>
+        )}
       </div>
-      <article className="question-card">
-        <span className="status-pill">Needs instructor</span>
-        <strong>When should I use React Hook Form with Zod?</strong>
-        {!compact && <p>AI smart reply suggests validating at the form boundary and reusing schemas with API requests.</p>}
-      </article>
+
+      {loading ? (
+        <p className="muted">Loading questions…</p>
+      ) : unanswered.length === 0 ? (
+        <p className="muted" style={{ margin: '4px 0' }}>
+          {questions.length === 0
+            ? 'No questions yet — students can ask in the Q&A tab.'
+            : '✓ All questions answered — nothing pending.'}
+        </p>
+      ) : (
+        <>
+          {!compact && (
+            <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: '#66756f' }}>
+              {unanswered.length} question{unanswered.length !== 1 ? 's' : ''} awaiting your response
+              {questions.length > unanswered.length && (
+                <span style={{ marginLeft: 8, color: '#24675d', fontWeight: 600 }}>
+                  · {questions.length - unanswered.length} already answered
+                </span>
+              )}
+            </p>
+          )}
+
+          {displayed.map((q) => (
+            <article key={q.id} className="question-card" style={{ marginBottom: 10 }}>
+              {/* Question header */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span className="status-pill">Needs instructor</span>
+                  <strong style={{ display: 'block', marginTop: 6, fontSize: '0.92rem' }}>
+                    {q.content}
+                  </strong>
+                  <span style={{ fontSize: '0.78rem', color: '#66756f' }}>
+                    {q.sender?.name ?? 'Student'} · {relTime(q.createdAt)}
+                    {q.replies?.length > 0 && (
+                      <span style={{ marginLeft: 8 }}>
+                        · {q.replies.length} student repl{q.replies.length === 1 ? 'y' : 'ies'}
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                {!compact && (
+                  <button
+                    onClick={() => setExpandedId(expandedId === q.id ? null : q.id)}
+                    style={{
+                      flexShrink: 0,
+                      minHeight: 30,
+                      padding: '0 12px',
+                      border: '1px solid #c8d6d0',
+                      borderRadius: 8,
+                      background: expandedId === q.id ? '#24675d' : '#f7faf8',
+                      color:      expandedId === q.id ? '#fff'     : '#1d3531',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      transition: 'background 0.15s, color 0.15s',
+                    }}
+                  >
+                    {expandedId === q.id ? 'Cancel' : 'Answer'}
+                  </button>
+                )}
+              </div>
+
+              {/* Inline answer form */}
+              {expandedId === q.id && (
+                <div style={{ marginTop: 10 }}>
+                  <textarea
+                    value={answerTexts[q.id] ?? ''}
+                    onChange={(e) => setAnswerTexts((p) => ({ ...p, [q.id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAnswer(q.id); }}
+                    placeholder="Type your answer… (Ctrl+Enter to post)"
+                    rows={3}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      border: '1px solid #c8d6d0',
+                      borderRadius: 8,
+                      resize: 'vertical',
+                      font: 'inherit',
+                      fontSize: '0.9rem',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <button
+                    className="wide-button"
+                    style={{ marginTop: 6 }}
+                    disabled={!answerTexts[q.id]?.trim() || submitting[q.id]}
+                    onClick={() => handleAnswer(q.id)}
+                  >
+                    <Send aria-hidden style={{ width: 15, height: 15 }} />
+                    {submitting[q.id] ? 'Posting…' : 'Post Answer'}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+
+          {!compact && unanswered.length > 5 && (
+            <p style={{ fontSize: '0.82rem', color: '#66756f', textAlign: 'center', marginTop: 4 }}>
+              +{unanswered.length - 5} more — open the course Q&amp;A page to see all
+            </p>
+          )}
+        </>
+      )}
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </section>
   );
 }
 
 function DiscussionManager({ onNotice }: { onNotice: (message: string) => void }) {
+  const { activeCourseId } = useAppStore();
+  const roomId = `course-${activeCourseId}`;
+
+  const [text,       setText]       = useState('');
+  const [publishing, setPublishing] = useState(false);
+  const [mentioning, setMentioning] = useState(false);
+  const [feedback,   setFeedback]   = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const flash = (ok: boolean, msg: string) => {
+    setFeedback({ ok, msg });
+    setTimeout(() => setFeedback(null), 4000);
+  };
+
+  const post = async (mentionAll: boolean) => {
+    const content = text.trim() || (mentionAll ? 'A new announcement from your instructor.' : '');
+    if (!content) return;
+
+    mentionAll ? setMentioning(true) : setPublishing(true);
+    try {
+      await apiClient.post(`/api/chat/rooms/${roomId}/announce`, { content, mentionAll });
+      setText('');
+      const msg = mentionAll
+        ? '@all message sent to enrolled learners'
+        : 'Announcement posted to course discussion';
+      flash(true, msg);
+      onNotice(msg);
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error ?? 'Failed to post — please try again.';
+      flash(false, errMsg);
+    } finally {
+      mentionAll ? setMentioning(false) : setPublishing(false);
+    }
+  };
+
+  const canPublish = text.trim().length > 0 && !publishing;
+
   return (
     <section className="panel">
       <div className="panel-title">
         <Users aria-hidden />
         <h2>Discussion Manager</h2>
       </div>
-      <div className="split-row">
-        <span>Pin announcement</span>
-        <button onClick={() => onNotice('Announcement pinned to course discussion')}>Publish</button>
+
+      {/* Inline feedback */}
+      {feedback && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 12,
+            padding: '8px 12px',
+            borderRadius: 8,
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            background: feedback.ok ? '#eefaf6' : '#ffe4e4',
+            border:     `1px solid ${feedback.ok ? '#a8d9ce' : '#fca5a5'}`,
+            color:      feedback.ok ? '#1a4f47'  : '#991b1b',
+          }}
+        >
+          {feedback.msg}
+        </div>
+      )}
+
+      {/* Announcement textarea */}
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Type an announcement for your students…"
+        rows={3}
+        aria-label="Announcement text"
+        style={{
+          width: '100%',
+          padding: '10px 12px',
+          border: '1px solid #c8d6d0',
+          borderRadius: 8,
+          resize: 'vertical',
+          font: 'inherit',
+          fontSize: '0.9rem',
+          boxSizing: 'border-box',
+          marginBottom: 10,
+          outline: 'none',
+          transition: 'border-color 0.15s',
+        }}
+        onFocus={(e)  => (e.target.style.borderColor = '#24675d')}
+        onBlur={(e)   => (e.target.style.borderColor = '#c8d6d0')}
+      />
+
+      {/* Publish row */}
+      <div className="split-row" style={{ borderTop: 'none', paddingTop: 0 }}>
+        <span style={{ color: '#66756f', fontSize: '0.88rem' }}>Pin to course discussion</span>
+        <button
+          disabled={!canPublish}
+          onClick={() => post(false)}
+          style={{
+            minHeight: 34,
+            padding: '0 14px',
+            border: '1px solid #c8d6d0',
+            borderRadius: 8,
+            background:  canPublish ? '#24675d' : '#f7faf8',
+            color:       canPublish ? '#fff'    : '#9ca3af',
+            cursor:      canPublish ? 'pointer' : 'not-allowed',
+            fontSize: '0.88rem',
+            fontWeight: 600,
+            transition: 'background 0.15s, color 0.15s',
+          }}
+        >
+          {publishing ? 'Posting…' : 'Publish'}
+        </button>
       </div>
+
+      {/* @all row */}
       <div className="split-row">
-        <span>Mention enrolled learners</span>
-        <button onClick={() => onNotice('@all mention queued for enrolled learners')}>@all</button>
+        <div style={{ display: 'grid', gap: 2 }}>
+          <span style={{ color: '#66756f', fontSize: '0.88rem' }}>Notify all enrolled learners</span>
+          {!text.trim() && (
+            <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>
+              Uses default message if textarea is empty
+            </span>
+          )}
+        </div>
+        <button
+          disabled={mentioning}
+          onClick={() => post(true)}
+          style={{
+            minHeight: 34,
+            padding: '0 14px',
+            border: '1px solid #c8d6d0',
+            borderRadius: 8,
+            background: '#f7faf8',
+            color:  mentioning ? '#9ca3af' : '#1d3531',
+            cursor: mentioning ? 'not-allowed' : 'pointer',
+            fontSize: '0.88rem',
+            fontWeight: 600,
+            flexShrink: 0,
+          }}
+        >
+          {mentioning ? 'Sending…' : '@all'}
+        </button>
       </div>
     </section>
   );
@@ -890,14 +1540,80 @@ function ModerationQueue({ onNotice }: { onNotice: (message: string) => void }) 
 }
 
 function ActivityLog() {
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/api/admin/events/log?limit=20');
+      if (res.success && res.data) {
+        setEvents(res.data);
+      }
+    } catch {
+      // Silently fail – the admin can retry manually
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    // Poll every 15 seconds so the log stays live without WebSocket overhead.
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const relTime = (iso: string) => {
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  };
+
   return (
     <section className="panel">
-      <div className="panel-title">
-        <Clock3 aria-hidden />
-        <h2>Activity Event Log</h2>
+      <div className="panel-title" style={{ justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <Clock3 aria-hidden />
+          <h2>Activity Event Log</h2>
+        </div>
+        <button
+          className="icon-button"
+          style={{ width: 30, height: 30 }}
+          title="Refresh"
+          aria-label="Refresh event log"
+          onClick={load}
+          disabled={loading}
+        >
+          <RefreshCw aria-hidden style={{ width: 14, height: 14, animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+        </button>
       </div>
-      {['message:sent processed', 'moderation:flagged queued', 'group:member_joined processed'].map((event) => (
-        <div className="event-row" key={event}>{event}</div>
+      {loading && events.length === 0 && (
+        <p className="muted">Loading events…</p>
+      )}
+      {!loading && events.length === 0 && (
+        <p className="muted">No activity events recorded yet.</p>
+      )}
+      {events.map((ev) => (
+        <div className="event-row" key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <span style={{
+              display: 'inline-block',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: ev.status === 'PROCESSED' ? '#10b981' : ev.status === 'FAILED' ? '#ef4444' : '#f59e0b',
+              flexShrink: 0,
+            }} />
+            <strong style={{ fontWeight: 600 }}>{ev.eventType}</strong>
+            <span style={{ color: '#6b7280' }}>{ev.status?.toLowerCase()}</span>
+          </span>
+          <span style={{ fontSize: 12, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+            {ev.createdAt ? relTime(ev.createdAt) : ''}
+          </span>
+        </div>
       ))}
     </section>
   );

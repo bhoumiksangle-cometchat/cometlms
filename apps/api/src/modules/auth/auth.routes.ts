@@ -8,6 +8,15 @@ import { createDevUser, findDevUserByEmail, findDevUserById, isDevAuthStoreEnabl
 
 export const authRoutes = Router();
 
+// Strip the bcrypt password hash (and any other server-only fields) before
+// serializing a User row out over the wire. Used by every auth response.
+type AnyUser = Record<string, unknown> & { passwordHash?: unknown };
+function toPublicUser<T extends AnyUser | null | undefined>(user: T): Omit<NonNullable<T>, 'passwordHash'> | null {
+  if (!user) return null;
+  const { passwordHash: _omit, ...rest } = user as AnyUser;
+  return rest as Omit<NonNullable<T>, 'passwordHash'>;
+}
+
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -66,7 +75,7 @@ authRoutes.post('/dev-bypass-login', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        user: isDevAuthStoreEnabled() ? toPublicDevUser(user as any) : user,
+        user: isDevAuthStoreEnabled() ? toPublicDevUser(user as any) : toPublicUser(user as any),
         tokens: createTokens(user),
       },
     });
@@ -95,7 +104,7 @@ authRoutes.post('/register', async (req, res, next) => {
       },
     });
 
-    res.status(201).json({ success: true, data: { user, tokens: createTokens(user) } });
+    res.status(201).json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user) } });
   } catch (error) {
     next(error);
   }
@@ -124,7 +133,7 @@ authRoutes.post('/login', async (req, res, next) => {
       return;
     }
 
-    res.json({ success: true, data: { user, tokens: createTokens(user) } });
+    res.json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user) } });
   } catch (error) {
     next(error);
   }
@@ -139,7 +148,7 @@ authRoutes.get('/me', requireAuth, async (req, res, next) => {
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
-    res.json({ success: true, data: user });
+    res.json({ success: true, data: toPublicUser(user) });
   } catch (error) {
     next(error);
   }

@@ -664,10 +664,12 @@ export function setupSocketServer(io: Server) {
           io.to(roomId).emit('call:ended', { roomId, callId, endedBy: user.id, duration, recordingUrl, endedAt: new Date().toISOString() });
         }
 
-        // 1:1 peer-to-peer calls: the remote peer never joined a Socket.IO room
-        // for the call, so relay the end signal directly to their user channel
-        // to guarantee teardown on the other side.
-        if (targetUserId) {
+        // 1:1 peer-to-peer calls: relay end signal to the remote peer's user
+        // channel ONLY when there's no room broadcast — otherwise the peer is
+        // already in the room and would receive call:ended twice. Clients can
+        // still de-dupe by callId, but skipping the duplicate avoids a UX
+        // flicker on clients that don't.
+        if (targetUserId && !roomId) {
           io.to(`user-${targetUserId}`).emit('call:ended', { callId, endedBy: user.id, duration, endedAt: new Date().toISOString() });
         }
 
@@ -692,6 +694,24 @@ export function setupSocketServer(io: Server) {
         callType,
         callId,
       });
+
+      // Push so the recipient gets an alert even when the app/tab is backgrounded.
+      // Priority 1 (highest) so it jumps ahead of lower-priority notification jobs.
+      addNotificationJob({
+        userId: targetUserId,
+        type: 'push',
+        title: `Incoming ${callType === 'video' ? '📹 video' : '📞 voice'} call`,
+        message: `${user.name} is calling you`,
+        data: {
+          type: 'incoming_call',
+          callType,
+          callId: callId ?? '',
+          callerId: user.id,
+          callerName: user.name,
+        },
+      }, { priority: 1 }).catch((err) =>
+        console.error('[Push] Failed to queue call-invite push:', err)
+      );
     });
 
     socket.on('call:accepted', ({ targetUserId, callId }: { targetUserId: string; callId?: string }) => {

@@ -139,6 +139,25 @@ class ApiClient {
     return response.data;
   }
 
+  // Q&A endpoints
+  async getQuestions(roomId: string) {
+    const response = await this.client.get<ApiResponse<any[]>>(`/api/chat/rooms/${roomId}/questions`);
+    return response.data;
+  }
+
+  async postQuestion(roomId: string, content: string) {
+    const response = await this.client.post<ApiResponse<any>>(`/api/chat/rooms/${roomId}/questions`, { content });
+    return response.data;
+  }
+
+  async postAnswer(roomId: string, questionId: string, content: string) {
+    const response = await this.client.post<ApiResponse<any>>(
+      `/api/chat/rooms/${roomId}/questions/${questionId}/answers`,
+      { content },
+    );
+    return response.data;
+  }
+
   // Courses endpoints
   async getCourses(search?: string) {
     const response = await this.client.get<ApiResponse<any[]>>('/api/courses', {

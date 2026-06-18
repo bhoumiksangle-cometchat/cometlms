@@ -136,37 +136,31 @@ services:
   # Binds on the host network so ICE candidates use the real public IP.
   # Required ports (must be open in firewall/security groups):
   #   3478/udp+tcp  — STUN + TURN
-  #   5349/udp+tcp  — TURNS (TLS) — optional but recommended
   #   49152-65535/udp — TURN relay media range
   #
-  # Set these in .env, then update apps/api/.env with the same values:
-  #   TURN_URLS=turn:cometlms-a.cometchat-staging.com:3478,turns:cometlms-a.cometchat-staging.com:5349
-  #   TURN_USERNAME=<TURN_USERNAME>
-  #   TURN_CREDENTIAL=<TURN_PASSWORD>
+  # Set these in .env:
+  #   TURN_REALM=your.domain.com
+  #   TURN_USERNAME=<username>
+  #   TURN_PASSWORD=<password>
   # ---------------------------------------------------------------------------
   coturn:
     image: coturn/coturn:latest
     container_name: cometlms-coturn
     restart: unless-stopped
     network_mode: host
-    command: >
-      -n
-      --log-file=stdout
-      --lt-cred-mech
-      --fingerprint
-      --no-multicast-peers
-      --no-cli
-      --no-tlsv1
-      --no-tlsv1_1
-      --realm=${TURN_REALM:-cometlms-a.cometchat-staging.com}
-      --user=${TURN_USERNAME:-cometlms}:${TURN_PASSWORD:-ChangeMeTurnSecret99}
-      --external-ip=$$(detect-external-ip)
-      --min-port=49152
-      --max-port=65535
-      --listening-port=3478
-      --tls-listening-port=5349
+    command:
+      - "--log-file=stdout"
+      - "--lt-cred-mech"
+      - "--fingerprint"
+      - "--no-multicast-peers"
+      - "--realm=${TURN_REALM:-cometlms-a.cometchat-staging.com}"
+      - "--user=${TURN_USERNAME:-cometlms}:${TURN_PASSWORD:-ChangeMeTurnSecret99}"
+      - "--min-port=49152"
+      - "--max-port=65535"
+      - "--listening-port=3478"
 
 volumes:
+  postgres_data:
     driver: local
   redis_data:
     driver: local

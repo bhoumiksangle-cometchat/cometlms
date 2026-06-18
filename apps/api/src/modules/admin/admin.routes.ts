@@ -252,3 +252,108 @@ adminRoutes.patch('/agents/:id', async (req, res, next) => {
     next(error);
   }
 });
+
+// ── User management ──────────────────────────────────────────────────────────
+
+const MOCK_USERS = [
+  { id: 'user-1', name: 'Alice Chen', email: 'alice@learnloop.test', role: 'STUDENT', isActive: true, isVerified: true, createdAt: new Date('2024-01-15').toISOString() },
+  { id: 'user-2', name: 'Bob Mehta', email: 'bob@learnloop.test', role: 'INSTRUCTOR', isActive: true, isVerified: true, createdAt: new Date('2024-02-10').toISOString() },
+  { id: 'user-3', name: 'Carol Ng', email: 'carol@learnloop.test', role: 'STUDENT', isActive: false, isVerified: false, createdAt: new Date('2024-03-05').toISOString() },
+  { id: 'user-4', name: 'David Park', email: 'david@learnloop.test', role: 'ADMIN', isActive: true, isVerified: true, createdAt: new Date('2024-03-20').toISOString() },
+];
+
+adminRoutes.get('/users', async (req, res, next) => {
+  if (isDevMode()) {
+    const { role, search } = req.query as { role?: string; search?: string };
+    let users = MOCK_USERS;
+    if (role) users = users.filter((u) => u.role === role);
+    if (search) {
+      const q = search.toLowerCase();
+      users = users.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+    }
+    res.json({ success: true, data: users, pagination: { page: 1, limit: 50, total: users.length, totalPages: 1 } });
+    return;
+  }
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+    const role = req.query.role as string | undefined;
+    const search = req.query.search as string | undefined;
+
+    const where = {
+      ...(role ? { role: role as any } : {}),
+      ...(search
+        ? { OR: [{ name: { contains: search, mode: 'insensitive' as const } }, { email: { contains: search, mode: 'insensitive' as const } }] }
+        : {}),
+    };
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: { id: true, name: true, email: true, role: true, isActive: true, isVerified: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: users,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRoutes.patch('/users/:id/ban', async (req, res, next) => {
+  if (isDevMode()) {
+    const user = MOCK_USERS.find((u) => u.id === req.params.id);
+    if (!user) { res.status(404).json({ success: false, error: 'User not found' }); return; }
+    user.isActive = false;
+    res.json({ success: true, data: user });
+    return;
+  }
+  try {
+    // Prevent admins from banning themselves or other admins
+    const target = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, role: true } });
+    if (!target) { res.status(404).json({ success: false, error: 'User not found' }); return; }
+    if (target.id === req.user!.id) { res.status(400).json({ success: false, error: 'Cannot ban yourself' }); return; }
+    if ((target.role === 'ADMIN' || target.role === 'SUPER_ADMIN') && req.user!.role !== 'SUPER_ADMIN') {
+      res.status(403).json({ success: false, error: 'Only SUPER_ADMIN can ban admins' });
+      return;
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { isActive: false },
+      select: { id: true, name: true, email: true, role: true, isActive: true, isVerified: true, createdAt: true },
+    });
+    res.json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRoutes.patch('/users/:id/unban', async (req, res, next) => {
+  if (isDevMode()) {
+    const user = MOCK_USERS.find((u) => u.id === req.params.id);
+    if (!user) { res.status(404).json({ success: false, error: 'User not found' }); return; }
+    user.isActive = true;
+    res.json({ success: true, data: user });
+    return;
+  }
+  try {
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { isActive: true },
+      select: { id: true, name: true, email: true, role: true, isActive: true, isVerified: true, createdAt: true },
+    });
+    res.json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+});

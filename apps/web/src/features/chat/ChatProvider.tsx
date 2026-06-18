@@ -285,7 +285,9 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } else {
       console.error('[ChatProvider] Cannot join room - socket not available');
     }
-  }, []);
+  // socket in deps: when socket reconnects, ChatWindow's useEffect re-runs and re-joins the room
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket]);
 
   const sendMessage = useCallback((roomId: string, content: string, parentMessageId?: string) => {
     console.log('[ChatProvider] Attempting to send message:', { roomId, content: content.substring(0, 20) + '...' });

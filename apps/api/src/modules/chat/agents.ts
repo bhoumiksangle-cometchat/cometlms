@@ -27,9 +27,14 @@ export async function generateAgentReply(input: AgentReplyInput) {
     if (input.courseId) {
       const agentConfig = await prisma.aiAgentConfig.findFirst({
         where: {
-          courseId: input.courseId,
+          // Prefer a course-specific config; fall back to a global one
+          // (course_id IS NULL) so seeded bots reply across every course
+          // without needing a per-course wiring step.
+          OR: [{ courseId: input.courseId }, { courseId: null }],
           botUserId: input.userId,
         },
+        // Course-specific row beats the global one when both exist.
+        orderBy: { courseId: 'desc' },
       });
 
       if (agentConfig) {
@@ -41,6 +46,23 @@ export async function generateAgentReply(input: AgentReplyInput) {
     }
   } catch (err) {
     console.error('Error fetching agent config from database:', err);
+  }
+
+  // Defensive: the OpenAI client is wired to Groq (baseURL groq.com/openai/v1).
+  // Models that exist on OpenAI but not Groq (e.g. gpt-4o) will 404 at send
+  // time. Snap unknown OpenAI models back to the env-configured Groq model so
+  // a stale AiAgentConfig.modelName doesn't silently fail every reply.
+  const NON_GROQ_MODELS = new Set([
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
+    'gpt-4',
+    'gpt-3.5-turbo',
+  ]);
+  if (NON_GROQ_MODELS.has(model)) {
+    const fallback = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    console.warn(`[agents] Model "${model}" not available on Groq; using "${fallback}" instead.`);
+    model = fallback;
   }
 
   if (!systemPrompt) {
@@ -108,10 +130,13 @@ export async function handleBotMention(input: { messageId: string; roomId: strin
 
     const agentConfig = await prisma.aiAgentConfig.findFirst({
       where: {
-        courseId: room.course.id,
+        // Course-specific config preferred; global config (course_id IS NULL)
+        // acts as the default so seeded agents work across every course.
+        OR: [{ courseId: room.course.id }, { courseId: null }],
         agentType: input.agentType,
         isEnabled: true,
       },
+      orderBy: { courseId: 'desc' },
     });
 
     if (!agentConfig) {
@@ -130,10 +155,13 @@ export async function handleBotMention(input: { messageId: string; roomId: strin
       userId: agentConfig.botUserId,
     });
 
-    // Create a message from the bot user
+    // Create a message from the bot user.
+    // ChatMessage.roomId is the UUID FK to ChatRoom.id, NOT the string roomId
+    // we have on hand. Look up the row UUID first; otherwise the create fails
+    // with a foreign-key violation and the bot reply silently disappears.
     const botMessage = await prisma.chatMessage.create({
       data: {
-        roomId: input.roomId,
+        roomId: room.id,
         senderId: agentConfig.botUserId,
         parentMessageId: input.messageId,
         content: aiResponse.content,
@@ -148,6 +176,10 @@ export async function handleBotMention(input: { messageId: string; roomId: strin
         sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
       },
     });
+
+    // Re-attach the string roomId so the socket emit downstream targets the
+    // right room (sockets join with the string roomId, not the UUID).
+    const botMessageForClients = { ...botMessage, roomId: input.roomId };
 
     // Log event
     await prisma.activityEventLog.create({
@@ -164,7 +196,7 @@ export async function handleBotMention(input: { messageId: string; roomId: strin
       },
     });
 
-    return botMessage;
+    return botMessageForClients;
   } catch (error) {
     console.error('Error handling bot mention:', error);
     throw error;

@@ -68,7 +68,7 @@ async function seedBotUsers() {
               agentType: botData.agentType as 'FAQ_BOT' | 'STUDY_ASSISTANT' | 'INSTRUCTOR_COPILOT',
               provider: 'OPENAI',
               systemPrompt: botData.systemPrompt,
-              modelName: 'gpt-4o',
+              modelName: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
               isEnabled: true,
             },
           });

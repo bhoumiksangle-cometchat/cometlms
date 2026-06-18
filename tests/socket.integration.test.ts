@@ -1,180 +1,180 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { io as ioClient, Socket } from 'socket.io-client';
 import jwt from 'jsonwebtoken';
 
-// Mock test setup
 describe('Socket.IO Real-Time Chat', () => {
-  let server: any;
+  let server: ReturnType<typeof createServer>;
   let io: SocketIOServer;
   let clientSocket: Socket;
   const JWT_SECRET = 'test-secret-key';
+  const TEST_PORT = 3099;
 
-  const createTestToken = (userId: string, role: string = 'STUDENT') => {
-    return jwt.sign({ sub: userId, role }, JWT_SECRET);
-  };
+  const createTestToken = (userId: string, role = 'STUDENT') =>
+    jwt.sign({ sub: userId, role }, JWT_SECRET);
 
-  beforeAll((done) => {
-    // Create HTTP server with Socket.IO
-    server = createServer();
-    io = new SocketIOServer(server, {
-      cors: {
-        origin: 'http://localhost:3001',
-        credentials: true,
-      },
-    });
-
-    // Mock auth middleware
-    io.use((socket, next) => {
-      const token = socket.handshake.auth.token as string;
-      if (!token) {
-        next(new Error('Authentication required'));
-        return;
-      }
-
-      try {
-        const payload = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & { role: string };
-        socket.data.user = { id: payload.sub as string, role: payload.role };
-        next();
-      } catch {
-        next(new Error('Invalid socket token'));
-      }
-    });
-
-    // Mock connection handler
-    io.on('connection', (socket) => {
-      socket.on('message:send', (payload) => {
-        io.to(payload.roomId).emit('message:sent', {
-          id: 'msg-1',
-          ...payload,
-          senderId: socket.data.user.id,
-          sender: { id: socket.data.user.id, name: 'Test User' },
-          createdAt: new Date().toISOString(),
+  // ── Setup: promise-based, no done() callback ──────────────────────────────
+  beforeAll(
+    () =>
+      new Promise<void>((resolve) => {
+        server = createServer();
+        io = new SocketIOServer(server, {
+          cors: { origin: `http://localhost:${TEST_PORT}`, credentials: true },
         });
-      });
 
-      socket.on('typing:start', ({ roomId }) => {
-        socket.to(roomId).emit('typing:start', { roomId, userId: socket.data.user.id });
-      });
-
-      socket.on('message:reaction_added', ({ messageId, emoji, roomId }) => {
-        io.to(roomId).emit('message:reaction_added', {
-          messageId,
-          emoji,
-          userId: socket.data.user.id,
+        // Auth middleware
+        io.use((socket, next) => {
+          const token = socket.handshake.auth.token as string;
+          if (!token) { next(new Error('Authentication required')); return; }
+          try {
+            const payload = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & { role: string };
+            socket.data.user = { id: payload.sub as string, role: payload.role };
+            next();
+          } catch {
+            next(new Error('Invalid socket token'));
+          }
         });
-      });
 
-      socket.on('room:join', ({ roomId }) => {
-        socket.join(roomId);
-        socket.emit('room:joined', { roomId });
-      });
-    });
+        // Event handlers
+        io.on('connection', (socket) => {
+          socket.on('message:send', (payload) => {
+            io.to(payload.roomId).emit('message:sent', {
+              id: 'msg-1',
+              ...payload,
+              senderId: socket.data.user.id,
+              sender: { id: socket.data.user.id, name: 'Test User' },
+              createdAt: new Date().toISOString(),
+            });
+          });
 
-    server.listen(3001, () => {
-      const token = createTestToken('user-123');
-      clientSocket = ioClient('http://localhost:3001', {
-        auth: { token },
+          socket.on('typing:start', ({ roomId }) => {
+            socket.to(roomId).emit('typing:start', { roomId, userId: socket.data.user.id });
+          });
+
+          socket.on('message:reaction_added', ({ messageId, emoji, roomId }) => {
+            io.to(roomId).emit('message:reaction_added', {
+              messageId, emoji, userId: socket.data.user.id,
+            });
+          });
+
+          socket.on('room:join', ({ roomId }) => {
+            socket.join(roomId);
+            socket.emit('room:joined', { roomId });
+          });
+        });
+
+        server.listen(TEST_PORT, () => {
+          clientSocket = ioClient(`http://localhost:${TEST_PORT}`, {
+            auth: { token: createTestToken('user-123') },
+            transports: ['websocket'],
+          });
+          clientSocket.once('connect', resolve);
+        });
+      }),
+  );
+
+  // ── Teardown ──────────────────────────────────────────────────────────────
+  afterAll(
+    () =>
+      new Promise<void>((resolve) => {
+        clientSocket.disconnect();
+        io.close(() => server.close(() => resolve()));
+      }),
+  );
+
+  // ── Tests ─────────────────────────────────────────────────────────────────
+
+  it('should connect to Socket.IO server with JWT auth', () => {
+    expect(clientSocket.connected).toBe(true);
+  });
+
+  it('should send and receive messages', () =>
+    new Promise<void>((resolve) => {
+      clientSocket.once('message:sent', (message) => {
+        expect(message.content).toBe('Hello World');
+        expect(message.senderId).toBe('user-123');
+        resolve();
+      });
+      clientSocket.emit('message:send', { roomId: 'test-room-1', content: 'Hello World' });
+    }));
+
+  it('should broadcast typing indicators to room members', () =>
+    new Promise<void>((resolve) => {
+      const roomId = 'test-room-typing';
+      const secondClient = ioClient(`http://localhost:${TEST_PORT}`, {
+        auth: { token: createTestToken('user-456') },
         transports: ['websocket'],
       });
 
-      clientSocket.on('connect', () => {
-        done();
+      secondClient.once('connect', () => {
+        // Both clients join the room; only then emit typing
+        let joined = 0;
+        const onJoined = () => {
+          if (++joined === 2) clientSocket.emit('typing:start', { roomId });
+        };
+        secondClient.emit('room:join', { roomId });
+        secondClient.once('room:joined', onJoined);
+        clientSocket.emit('room:join', { roomId });
+        clientSocket.once('room:joined', onJoined);
+
+        secondClient.once('typing:start', ({ userId }) => {
+          expect(userId).toBe('user-123');
+          secondClient.disconnect();
+          resolve();
+        });
       });
-    });
-  });
+    }));
 
-  afterAll(() => {
-    clientSocket.disconnect();
-    io.close();
-    server.close();
-  });
-
-  it('should connect to Socket.IO server with JWT auth', (done) => {
-    expect(clientSocket.connected).toBe(true);
-    done();
-  });
-
-  it('should send and receive messages', (done) => {
-    const roomId = 'test-room-1';
-
-    clientSocket.on('message:sent', (message) => {
-      expect(message.content).toBe('Hello World');
-      expect(message.senderId).toBe('user-123');
-      done();
-    });
-
-    clientSocket.emit('message:send', {
-      roomId,
-      content: 'Hello World',
-    });
-  });
-
-  it('should handle typing indicators', (done) => {
-    const roomId = 'test-room-2';
-
-    // Create a second client to receive typing event
-    const token = createTestToken('user-456');
-    const secondClient = ioClient('http://localhost:3001', {
-      auth: { token },
-      transports: ['websocket'],
-    });
-
-    secondClient.on('connect', () => {
-      secondClient.on('typing:start', ({ userId }) => {
-        expect(userId).toBe('user-123');
-        secondClient.disconnect();
-        done();
-      });
-
-      // First client joins room
+  it('should handle message reactions', () =>
+    new Promise<void>((resolve) => {
+      const roomId = 'test-room-reactions';
+      // Join the room first so io.to(roomId) delivers back to this client
       clientSocket.emit('room:join', { roomId });
-      clientSocket.on('room:joined', () => {
-        // First client emits typing
-        clientSocket.emit('typing:start', { roomId });
+      clientSocket.once('room:joined', () => {
+        clientSocket.once('message:reaction_added', ({ emoji, userId }) => {
+          expect(emoji).toBe('👍');
+          expect(userId).toBe('user-123');
+          resolve();
+        });
+        clientSocket.emit('message:reaction_added', {
+          messageId: 'msg-test-1', emoji: '👍', roomId,
+        });
       });
-    });
-  });
+    }));
 
-  it('should handle message reactions', (done) => {
-    const roomId = 'test-room-3';
-    const messageId = 'msg-test-1';
+  it('should join rooms and confirm join event', () =>
+    new Promise<void>((resolve) => {
+      const roomId = 'test-room-join-confirm';
+      clientSocket.once('room:joined', ({ roomId: joined }) => {
+        expect(joined).toBe(roomId);
+        resolve();
+      });
+      clientSocket.emit('room:join', { roomId });
+    }));
 
-    clientSocket.on('message:reaction_added', ({ emoji, userId }) => {
-      expect(emoji).toBe('👍');
-      expect(userId).toBe('user-123');
-      done();
-    });
+  it('should reject connection with invalid JWT', () =>
+    new Promise<void>((resolve) => {
+      const failClient = ioClient(`http://localhost:${TEST_PORT}`, {
+        auth: { token: 'not-a-valid-jwt' },
+        transports: ['websocket'],
+      });
+      failClient.once('connect_error', (error) => {
+        expect(error.message).toContain('Invalid socket token');
+        failClient.disconnect();
+        resolve();
+      });
+    }));
 
-    clientSocket.emit('message:reaction_added', {
-      messageId,
-      emoji: '👍',
-      roomId,
-    });
-  });
-
-  it('should join rooms', (done) => {
-    const roomId = 'test-room-4';
-
-    clientSocket.on('room:joined', ({ roomId: joinedRoomId }) => {
-      expect(joinedRoomId).toBe(roomId);
-      done();
-    });
-
-    clientSocket.emit('room:join', { roomId });
-  });
-
-  it('should handle authentication failure', (done) => {
-    const badToken = 'invalid-token';
-    const failClient = ioClient('http://localhost:3001', {
-      auth: { token: badToken },
-      transports: ['websocket'],
-    });
-
-    failClient.on('connect_error', (error) => {
-      expect(error.message).toContain('Invalid socket token');
-      done();
-    });
-  });
+  it('should reject connection with no token', () =>
+    new Promise<void>((resolve) => {
+      const noAuthClient = ioClient(`http://localhost:${TEST_PORT}`, {
+        transports: ['websocket'],
+      });
+      noAuthClient.once('connect_error', (error) => {
+        expect(error.message).toContain('Authentication required');
+        noAuthClient.disconnect();
+        resolve();
+      });
+    }));
 });

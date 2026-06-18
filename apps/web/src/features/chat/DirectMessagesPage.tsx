@@ -152,7 +152,7 @@ export default function DirectMessagesPage() {
           return {
             ...c,
             lastMessage: message.content,
-            unread: selectedConv?.roomId !== message.roomId && message.senderId !== user?.id ? c.unread + 1 : c.unread
+            unread: selectedConv?.roomId !== message.roomId && message.senderId !== user?.id ? (c.unread ?? 0) + 1 : (c.unread ?? 0)
           };
         }
         return c;

@@ -21,14 +21,16 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
-    "typescript": "^5.4.5",
-    "eslint": "^8.57.0",
-    "prettier": "^3.3.0",
-    "vitest": "^1.6.0",
-    "playwright": "^1.44.1",
     "@types/node": "^20.12.12",
+    "@types/supertest": "^7.2.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.57.0",
+    "playwright": "^1.44.1",
+    "prettier": "^3.3.0",
+    "supertest": "^7.2.2",
+    "tsup": "^8.1.0",
     "tsx": "^4.11.0",
-    "tsup": "^8.1.0"
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
   }
 }

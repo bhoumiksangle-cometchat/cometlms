@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from '../../middleware/auth';
 import { addRoomMember, createChatRoom, removeRoomMember } from './groups';
 import { generateAgentReply } from './agents';
 import { listRoomMessages, sendChatMessage } from './messages';
+import { addNotificationJob } from '../../lib/queue';
 
 export const chatRoutes = Router();
 
@@ -215,6 +216,263 @@ chatRoutes.post('/agents/summarize', requireAuth, async (req, res, next) => {
     });
 
     res.json({ success: true, data: { summary: reply.content } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// Q&A Endpoints
+// ============================================
+
+// List all questions for a room (top-level messages tagged isQuestion)
+chatRoutes.get('/rooms/:roomId/questions', requireAuth, async (req, res, next) => {
+  try {
+    const chatRoom = await prisma.chatRoom.findUnique({
+      where: { roomId: req.params.roomId },
+      select: { id: true },
+    });
+
+    if (!chatRoom) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+
+    const questions = await prisma.chatMessage.findMany({
+      where: {
+        roomId: chatRoom.id,
+        parentMessageId: null,
+        isDeleted: false,
+        metadata: { path: ['isQuestion'], equals: true },
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
+        replies: {
+          where: { isDeleted: false },
+          include: {
+            sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Replace internal UUID roomId with the string roomId for frontend
+    const result = questions.map((q) => ({
+      ...q,
+      roomId: req.params.roomId,
+      replies: q.replies.map((r) => ({ ...r, roomId: req.params.roomId })),
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Post a new question
+chatRoutes.post('/rooms/:roomId/questions', requireAuth, async (req, res, next) => {
+  try {
+    const input = z.object({ content: z.string().min(1) }).parse(req.body);
+
+    const chatRoom = await prisma.chatRoom.findUnique({
+      where: { roomId: req.params.roomId },
+      select: { id: true, roomId: true, name: true, ownerId: true },
+    });
+
+    if (!chatRoom) {
+      res.status(404).json({ success: false, error: 'Chat room not found' });
+      return;
+    }
+
+    const question = await prisma.chatMessage.create({
+      data: {
+        roomId: chatRoom.id,
+        senderId: req.user!.id,
+        content: input.content,
+        contentType: 'TEXT',
+        metadata: {
+          isQuestion: true,
+          reactions: {},
+          readBy: [req.user!.id],
+          mentions: [],
+        },
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
+        replies: true,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: { ...question, roomId: req.params.roomId },
+    });
+
+    // Push to the room owner (instructor) so they're alerted to the new question.
+    // Skip if the room owner is the one asking (self-post to own room).
+    if (chatRoom.ownerId && chatRoom.ownerId !== req.user!.id) {
+      addNotificationJob({
+        userId: chatRoom.ownerId,
+        type: 'push',
+        title: `New question in ${chatRoom.name || 'your course'}`,
+        message: `${question.sender.name}: "${input.content.slice(0, 120)}"`,
+        data: {
+          type: 'new_question',
+          questionId: question.id,
+          roomId: req.params.roomId,
+          askerId: req.user!.id,
+          askerName: question.sender.name,
+        },
+      }, { priority: 3 }).catch((err) =>
+        console.error('[Push] Failed to queue new-question push:', err)
+      );
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Post an answer to a question
+chatRoutes.post('/rooms/:roomId/questions/:questionId/answers', requireAuth, async (req, res, next) => {
+  try {
+    const input = z.object({ content: z.string().min(1) }).parse(req.body);
+
+    const chatRoom = await prisma.chatRoom.findUnique({
+      where: { roomId: req.params.roomId },
+      select: { id: true, roomId: true },
+    });
+
+    if (!chatRoom) {
+      res.status(404).json({ success: false, error: 'Chat room not found' });
+      return;
+    }
+
+    // Verify the parent question exists
+    const parentQuestion = await prisma.chatMessage.findUnique({
+      where: { id: req.params.questionId },
+    });
+
+    if (!parentQuestion) {
+      res.status(404).json({ success: false, error: 'Question not found' });
+      return;
+    }
+
+    const answer = await prisma.chatMessage.create({
+      data: {
+        roomId: chatRoom.id,
+        senderId: req.user!.id,
+        parentMessageId: req.params.questionId,
+        content: input.content,
+        contentType: 'TEXT',
+        metadata: {
+          isAnswer: true,
+          reactions: {},
+          readBy: [req.user!.id],
+          mentions: [],
+        },
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: { ...answer, roomId: req.params.roomId },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// Announcement Endpoint
+// ============================================
+
+// POST an announcement to a course room (instructor/admin only).
+// Stores the message with isAnnouncement metadata; mentionAll prepends "@all ".
+chatRoutes.post('/rooms/:roomId/announce', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
+  if (isDevMode()) {
+    const { content = '', mentionAll = false } = req.body ?? {};
+    res.status(201).json({
+      success: true,
+      data: {
+        id: `announce-${Date.now()}`,
+        content: mentionAll ? `@all ${content}` : content,
+        roomId: req.params.roomId,
+        createdAt: new Date().toISOString(),
+        sender: { id: 'dev-instructor', name: 'Instructor', role: 'INSTRUCTOR' },
+      },
+    });
+    return;
+  }
+  try {
+    const input = z.object({
+      content:    z.string().min(1, 'Announcement cannot be empty'),
+      mentionAll: z.boolean().default(false),
+    }).parse(req.body);
+
+    const chatRoom = await prisma.chatRoom.findUnique({
+      where: { roomId: req.params.roomId },
+      select: { id: true },
+    });
+
+    if (!chatRoom) {
+      res.status(404).json({ success: false, error: 'Chat room not found' });
+      return;
+    }
+
+    const finalContent = input.mentionAll ? `@all ${input.content}` : input.content;
+
+    const message = await prisma.chatMessage.create({
+      data: {
+        roomId:      chatRoom.id,
+        senderId:    req.user!.id,
+        content:     finalContent,
+        contentType: 'TEXT',
+        metadata: {
+          isAnnouncement: true,
+          mentionAll:     input.mentionAll,
+          reactions:      {},
+          readBy:         [req.user!.id],
+          mentions:       input.mentionAll ? ['all'] : [],
+        },
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatarUrl: true, role: true } },
+      },
+    });
+
+    res.status(201).json({ success: true, data: { ...message, roomId: req.params.roomId } });
+
+    // Fire-and-forget: push to every room member so they see the announcement
+    // even when the tab/app is backgrounded. Sender is excluded.
+    prisma.chatRoomMember.findMany({
+      where: { roomId: chatRoom.id, removedAt: null },
+      select: { userId: true },
+    }).then((members) => {
+      for (const { userId } of members) {
+        if (userId === req.user!.id) continue; // don't notify the sender
+        addNotificationJob({
+          userId,
+          type: 'push',
+          title: `📢 Announcement from ${message.sender.name}`,
+          message: input.content.slice(0, 150),
+          data: {
+            type: 'announcement',
+            messageId: message.id,
+            roomId: req.params.roomId,
+            senderName: message.sender.name,
+          },
+        }, { priority: 2 }).catch((err) =>
+          console.error('[Push] Failed to queue announcement push:', err)
+        );
+      }
+    }).catch((err) =>
+      console.error('[Push] Failed to fetch members for announcement push:', err)
+    );
   } catch (error) {
     next(error);
   }
