@@ -1,6 +1,5 @@
 import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/apiClient';
-import { connectSocket } from '../../lib/socket';
 import { requestPermissionAndRegisterToken, removeDeviceToken, onForegroundMessage } from '../../lib/firebase-messaging';
 
 export interface User {
@@ -84,6 +83,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               if (refreshed.success && refreshed.data) {
                 localStorage.setItem('accessToken', refreshed.data.accessToken);
                 localStorage.setItem('refreshToken', refreshed.data.refreshToken);
+                if (refreshed.data.cometchatAuthToken) {
+                  localStorage.setItem('cometchatAuthToken', refreshed.data.cometchatAuthToken);
+                }
                 apiClient.setToken(refreshed.data.accessToken);
                 response = await apiClient.getMe();
               }
@@ -92,7 +94,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
           if (response && response.success && response.data) {
             setUser(response.data);
-            connectSocket(token);
             // Initialize push notifications after restoring auth session
             initializePushNotifications();
           } else {
@@ -126,10 +127,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       apiClient.setToken(tokens.accessToken);
       localStorage.setItem('accessToken', tokens.accessToken);
       localStorage.setItem('refreshToken', tokens.refreshToken);
+      if (response.data.cometchatAuthToken) {
+        localStorage.setItem('cometchatAuthToken', response.data.cometchatAuthToken);
+      }
       setUser(newUser);
-
-      // Connect to Socket.IO
-      connectSocket(tokens.accessToken);
 
       // Initialize push notifications after successful registration
       initializePushNotifications();
@@ -157,10 +158,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       apiClient.setToken(tokens.accessToken);
       localStorage.setItem('accessToken', tokens.accessToken);
       localStorage.setItem('refreshToken', tokens.refreshToken);
+      if (response.data.cometchatAuthToken) {
+        localStorage.setItem('cometchatAuthToken', response.data.cometchatAuthToken);
+      }
       setUser(loggedInUser);
-
-      // Connect to Socket.IO
-      connectSocket(tokens.accessToken);
 
       // Initialize push notifications after successful login
       initializePushNotifications();
@@ -187,6 +188,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Clear auth state
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
+      localStorage.removeItem('cometchatAuthToken');
       apiClient.setToken(null);
       setUser(null);
       setPushNotificationStatus(null);

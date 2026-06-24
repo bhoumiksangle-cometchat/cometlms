@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.500.0",
-    "@langchain/community": "^0.2.0",
+
     "@lms/shared-types": "*",
     "@lms/shared-utils": "*",
     "@prisma/client": "^5.14.0",
@@ -29,11 +29,12 @@
     "helmet": "^7.1.0",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
-    "langchain": "^0.2.0",
+
     "lodash": "^4.17.21",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.13",
-    "openai": "^4.47.0",
+    "openai": "^4.52.0",
+
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "socket.io": "^4.7.4",

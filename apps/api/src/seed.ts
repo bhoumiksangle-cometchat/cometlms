@@ -199,10 +199,6 @@ export async function seedCourses() {
       },
     ];
 
-    const reactCourse = await prisma.course.findFirst({
-      where: { slug: 'react-foundations' },
-    });
-
     for (const bot of botsData) {
       let botUser = await prisma.user.findUnique({
         where: { email: bot.email },
@@ -221,29 +217,8 @@ export async function seedCourses() {
         console.log(`[Seed] Created bot user: ${bot.name}`);
       }
 
-      if (reactCourse) {
-        const existingConfig = await prisma.aiAgentConfig.findFirst({
-          where: {
-            courseId: reactCourse.id,
-            agentType: bot.agentType,
-          },
-        });
-
-        if (!existingConfig) {
-          await prisma.aiAgentConfig.create({
-            data: {
-              courseId: reactCourse.id,
-              agentType: bot.agentType,
-              botUserId: botUser.id,
-              provider: 'OPENAI',
-              systemPrompt: bot.systemPrompt,
-              modelName: 'gpt-4o',
-              isEnabled: true,
-            },
-          });
-          console.log(`[Seed] Created AI Agent Config for ${bot.name} on ${reactCourse.title}`);
-        }
-      }
+      // AI agents are now managed via CometChat's Agent Builder (dashboard).
+      // No server-side bot sync or agent config needed.
     }
 
   } catch (error) {

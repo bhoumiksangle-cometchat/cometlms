@@ -1,6 +1,7 @@
 import { prisma } from '../../server';
 import { Payment } from './payment.model';
 import { AppError } from '../../middleware/errorHandler';
+import { cometChatService } from '../../services/cometchat.service';
 
 export class PaymentService {
   public async createCheckoutSession(userId: string, courseId: string) {
@@ -59,18 +60,16 @@ export class PaymentService {
           },
         });
 
-        // Add user to course chat room
+        // Add user to CometChat course group
         const course = await prisma.course.findUnique({
           where: { id: payment.courseId },
         });
-        if (course?.chatRoomId) {
-          await prisma.chatRoomMember.create({
-            data: {
-              roomId: course.chatRoomId,
-              userId: payment.userId,
-              role: 'member',
-            },
-          });
+        if (course?.cometchatGroupId) {
+          try {
+            await cometChatService.addGroupMembers(course.cometchatGroupId, [{ uid: payment.userId, scope: 'participant' }]);
+          } catch (err) {
+            console.warn('[PaymentService] Failed to add user to CometChat group:', err);
+          }
         }
       }
     }

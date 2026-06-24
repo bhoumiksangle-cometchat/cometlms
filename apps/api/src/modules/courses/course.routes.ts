@@ -3,10 +3,69 @@ import { z } from 'zod';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { prisma } from '../../server';
 import { addNotificationJob } from '../../lib/queue';
+import { cometChatService, courseGroupGuid } from '../../services/cometchat.service';
+import { logger } from '../../lib/logger';
 
 export const courseRoutes = Router();
 
 const isDevMode = () => !process.env.DATABASE_URL;
+
+// Stable CometChat group id for a course.
+export { courseGroupGuid };
+
+/**
+ * Create (or sync) the CometChat group that backs a course discussion, with the
+ * instructor as owner/admin. Ensures the instructor exists as a CometChat user
+ * first (createGroup with `owner` requires it). Best-effort — never throws.
+ * Returns the group guid or null.
+ */
+async function provisionCourseGroup(course: {
+  id: string;
+  title: string;
+  instructorId: string;
+}): Promise<string | null> {
+  if (!cometChatService.isEnabled()) return null;
+  const guid = courseGroupGuid(course.id);
+  try {
+    const instructor = await prisma.user.findUnique({
+      where: { id: course.instructorId },
+      select: { id: true, name: true, avatarUrl: true, role: true },
+    });
+    if (instructor) {
+      await cometChatService.createUser({
+        uid: instructor.id,
+        name: instructor.name,
+        avatar: instructor.avatarUrl,
+        role: instructor.role,
+      });
+    }
+    await cometChatService.createGroup({
+      guid,
+      name: course.title,
+      type: 'public',
+      owner: course.instructorId,
+      metadata: { lmsCourseId: course.id, lmsStatus: 'active' },
+    });
+    // Belt-and-suspenders: ensure the instructor is an admin member.
+    await cometChatService.addGroupMembers(guid, [{ uid: course.instructorId, scope: 'admin' }]);
+    return guid;
+  } catch (e) {
+    logger.warn(`[Courses] provisionCourseGroup(${guid}) failed (non-fatal):`, e);
+    return null;
+  }
+}
+
+/** Soft-deactivate the CometChat group when a course is unpublished/archived. */
+async function deactivateCourseGroup(courseId: string): Promise<void> {
+  if (!cometChatService.isEnabled()) return;
+  try {
+    await cometChatService.updateGroup(courseGroupGuid(courseId), {
+      metadata: { lmsCourseId: courseId, lmsStatus: 'archived' },
+    });
+  } catch (e) {
+    logger.warn(`[Courses] deactivateCourseGroup(${courseId}) failed (non-fatal):`, e);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Dev-mode mock data
@@ -24,7 +83,7 @@ const MOCK_COURSES = [
     currency: 'USD',
     status: 'PUBLISHED',
     publishedAt: new Date('2024-01-15').toISOString(),
-    chatRoomId: 'course-react-foundations',
+    cometchatGroupId: 'course-react-foundations',
     instructorId: 'instructor-1',
     categoryId: 'cat-1',
     instructor: { id: 'instructor-1', name: 'Maya Chen', avatarUrl: null, bio: 'Senior Frontend Engineer at TechCorp' },
@@ -68,7 +127,7 @@ const MOCK_COURSES = [
     currency: 'USD',
     status: 'PUBLISHED',
     publishedAt: new Date('2024-02-01').toISOString(),
-    chatRoomId: 'course-node-api',
+    cometchatGroupId: 'course-node-api',
     instructorId: 'instructor-2',
     categoryId: 'cat-2',
     instructor: { id: 'instructor-2', name: 'Arjun Mehta', avatarUrl: null, bio: 'Staff Backend Engineer' },
@@ -100,7 +159,7 @@ const MOCK_COURSES = [
     currency: 'USD',
     status: 'PUBLISHED',
     publishedAt: new Date('2024-03-10').toISOString(),
-    chatRoomId: 'course-design-systems',
+    cometchatGroupId: 'course-design-systems',
     instructorId: 'instructor-1',
     categoryId: 'cat-3',
     instructor: { id: 'instructor-1', name: 'Maya Chen', avatarUrl: null, bio: 'Senior Frontend Engineer at TechCorp' },
@@ -169,7 +228,7 @@ courseRoutes.get('/:id', async (req, res, next) => {
   try {
     const course = await prisma.course.findUnique({
       where: { id: req.params.id },
-      include: { instructor: true, category: true, sections: { include: { lessons: true } }, aiAgentConfigs: true },
+      include: { instructor: true, category: true, sections: { include: { lessons: true } } },
     });
 
     if (!course) {
@@ -199,7 +258,7 @@ courseRoutes.post('/', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_AD
       currency: input.currency || 'USD',
       status: 'PUBLISHED', // Make it published so it shows up
       publishedAt: new Date().toISOString(),
-      chatRoomId: null,
+      cometchatGroupId: null,
       instructorId: req.user!.id,
       categoryId: input.categoryId || 'cat-1',
       createdAt: new Date().toISOString(),
@@ -221,8 +280,8 @@ courseRoutes.post('/', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_AD
   try {
     const input = courseSchema.parse(req.body);
 
-    // Create the course as PUBLISHED immediately and spin up a chat room so
-    // discussion/Q&A work right away — all in a single transaction.
+    // Create the course as PUBLISHED immediately, then provision its CometChat
+    // discussion group (with the instructor as owner/admin).
     const course = await prisma.$transaction(async (tx) => {
       const newCourse = await tx.course.create({
         data: {
@@ -233,27 +292,21 @@ courseRoutes.post('/', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_AD
         },
       });
 
-      const roomKey = `course-${newCourse.id}`;
-      await tx.chatRoom.create({
-        data: {
-          roomId: roomKey,
-          name: `${newCourse.title} — Discussion`,
-          type: 'GROUP',
-          ownerId: newCourse.instructorId,
-          isActive: true,
-          members: { create: { userId: newCourse.instructorId, role: 'owner' } },
-        },
-      });
-
       return tx.course.update({
         where: { id: newCourse.id },
-        data: { chatRoomId: roomKey },
+        data: { cometchatGroupId: courseGroupGuid(newCourse.id) },
         include: {
           instructor: { select: { id: true, name: true, avatarUrl: true } },
           category: true,
           sections: { include: { lessons: true } },
         },
       });
+    });
+
+    await provisionCourseGroup({
+      id: course.id,
+      title: course.title,
+      instructorId: course.instructorId,
     });
 
     res.status(201).json({ success: true, data: course });
@@ -285,31 +338,21 @@ courseRoutes.post('/:id/publish', requireAuth, requireRole('INSTRUCTOR', 'ADMIN'
       return;
     }
 
-    const roomKey = `course-${course.id}`;
-    const published = await prisma.$transaction(async (tx) => {
-      const room = await tx.chatRoom.upsert({
-        where: { roomId: roomKey },
-        update: { name: course.title, isActive: true },
-        create: {
-          roomId: roomKey,
-          name: course.title,
-          type: 'GROUP',
-          ownerId: course.instructorId,
-          members: {
-            create: { userId: course.instructorId, role: 'owner' },
-          },
-        },
-      });
+    const guid = courseGroupGuid(course.id);
+    const published = await prisma.course.update({
+      where: { id: course.id },
+      data: {
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+        cometchatGroupId: guid,
+      },
+    });
 
-      return tx.course.update({
-        where: { id: course.id },
-        data: {
-          status: 'PUBLISHED',
-          publishedAt: new Date(),
-          chatRoomId: room.roomId, // FK references ChatRoom.room_id (see migration SQL)
-        },
-        include: { chatRoom: true },
-      });
+    // Create / reactivate the CometChat discussion group for this course.
+    await provisionCourseGroup({
+      id: course.id,
+      title: course.title,
+      instructorId: course.instructorId,
     });
 
     res.json({ success: true, data: published });
@@ -344,9 +387,35 @@ courseRoutes.post('/:id/publish', requireAuth, requireRole('INSTRUCTOR', 'ADMIN'
   }
 });
 
+courseRoutes.post('/:id/unpublish', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const course = await prisma.course.findUnique({ where: { id: req.params.id } });
+    if (!course) {
+      res.status(404).json({ success: false, error: 'Course not found' });
+      return;
+    }
+
+    const updated = await prisma.course.update({
+      where: { id: course.id },
+      data: { status: 'ARCHIVED' },
+    });
+
+    // Deactivate the CometChat group (non-destructive — preserves history).
+    await deactivateCourseGroup(course.id);
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
 courseRoutes.delete('/:id', requireAuth, requireRole('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
   try {
     await prisma.course.delete({ where: { id: req.params.id } });
+    // Remove the CometChat discussion group for the deleted course.
+    if (cometChatService.isEnabled()) {
+      await cometChatService.deleteGroup(courseGroupGuid(req.params.id));
+    }
     res.status(204).send();
   } catch (error) {
     next(error);

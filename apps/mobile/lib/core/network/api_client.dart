@@ -6,7 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class ApiClient {
   static const String deploymentBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://cometlms-a.cometchat-staging.com',
+    defaultValue: 'http://192.168.29.245:3000',
   );
 
   late final Dio _dio;

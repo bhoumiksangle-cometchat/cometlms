@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:cometchat_chat_uikit/cometchat_chat_uikit.dart' as cometchat;
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/auth_provider.dart';
 
@@ -45,7 +47,9 @@ class _CourseDetailsScreenState extends ConsumerState<CourseDetailsScreen> {
 
     final title = course['title'] ?? 'Untitled Course';
     final description = course['description'] ?? '';
-    final syllabus = course['syllabus'] as List? ?? [];
+    final syllabus = course['sections'] as List? ?? [];
+    final price = (course['price'] ?? 0).toDouble();
+    final currency = course['currency'] ?? 'USD';
 
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
@@ -134,38 +138,41 @@ class _CourseDetailsScreenState extends ConsumerState<CourseDetailsScreen> {
                         );
                       }
 
+                      // Free vs Paid enrollment
+                      if (price > 0) {
+                        return SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _isEnrolling ? null : () => _handlePaidEnrollment(),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: _isEnrolling
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation(Colors.white),
+                                    ),
+                                  )
+                                : Text(
+                                    'Enroll — \$${price.toStringAsFixed(2)} $currency',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                          ),
+                        );
+                      }
+
+                      // Free enrollment
                       return SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: _isEnrolling
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _isEnrolling = true;
-                                  });
-                                  try {
-                                    final apiClient = ref.read(apiClientProvider);
-                                    await apiClient.post('/api/enrollments', data: {
-                                      'courseId': widget.courseId,
-                                    });
-                                    ref.invalidate(enrollmentsProvider);
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Successfully enrolled!')),
-                                      );
-                                    }
-                                  } catch (e) {
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text('Enrollment failed: $e')),
-                                      );
-                                    }
-                                  } finally {
-                                    setState(() {
-                                      _isEnrolling = false;
-                                    });
-                                  }
-                                },
+                          onPressed: _isEnrolling ? null : () => _handleFreeEnrollment(),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -191,6 +198,38 @@ class _CourseDetailsScreenState extends ConsumerState<CourseDetailsScreen> {
                     ),
                     error: (e, s) => Text('Error loading status: $e', style: const TextStyle(color: AppColors.error)),
                   ),
+                  const SizedBox(height: 12),
+
+                  // Message Instructor button (visible when course has instructor info)
+                  if (course['instructor'] != null)
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final instructor = course['instructor'];
+                          final instructorId = instructor['id']?.toString() ?? '';
+                          final instructorName = instructor['name']?.toString() ?? 'Instructor';
+                          context.push('/messages', extra: {
+                            'user': cometchat.User(
+                              uid: instructorId,
+                              name: instructorName,
+                            ),
+                          });
+                        },
+                        icon: const Icon(Icons.chat_outlined, color: AppColors.primary),
+                        label: const Text(
+                          'Message Instructor',
+                          style: TextStyle(color: AppColors.primary),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.primary),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 32),
 
                   const Text(
@@ -227,16 +266,10 @@ class _CourseDetailsScreenState extends ConsumerState<CourseDetailsScreen> {
                     final duration = lesson['duration'] ?? '';
 
                     return ListTile(
-                      leading: const Icon(Icons.play_circle_outline, color: AppColors.primary),
-                      title: Text(
-                        lessonTitle,
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                      trailing: duration.isNotEmpty
-                          ? Text(
-                              duration,
-                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                            )
+                      leading: const Icon(Icons.play_circle_outline, color: AppColors.textSecondary),
+                      title: Text(lessonTitle, style: const TextStyle(color: Colors.white70)),
+                      trailing: duration.toString().isNotEmpty
+                          ? Text(duration.toString(), style: const TextStyle(color: AppColors.textMuted, fontSize: 12))
                           : null,
                     );
                   }).toList(),
@@ -248,5 +281,71 @@ class _CourseDetailsScreenState extends ConsumerState<CourseDetailsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _handleFreeEnrollment() async {
+    setState(() => _isEnrolling = true);
+    try {
+      final apiClient = ref.read(apiClientProvider);
+      await apiClient.post('/api/enrollments', data: {
+        'courseId': widget.courseId,
+      });
+      ref.invalidate(enrollmentsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Successfully enrolled!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Enrollment failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isEnrolling = false);
+    }
+  }
+
+  Future<void> _handlePaidEnrollment() async {
+    setState(() => _isEnrolling = true);
+    try {
+      final apiClient = ref.read(apiClientProvider);
+      // Get Stripe Checkout URL from backend
+      final response = await apiClient.post('/api/payments/checkout', data: {
+        'courseId': widget.courseId,
+      });
+      final data = response.data['data'] ?? response.data;
+      final checkoutUrl = data['url'] as String?;
+
+      if (checkoutUrl == null || checkoutUrl.isEmpty) {
+        throw Exception('No checkout URL returned');
+      }
+
+      // Open Stripe Checkout in in-app browser
+      final uri = Uri.parse(checkoutUrl);
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+
+      if (!launched) {
+        throw Exception('Could not open checkout page');
+      }
+
+      // After returning from checkout, poll enrollment status
+      if (mounted) {
+        await Future.delayed(const Duration(seconds: 2));
+        ref.invalidate(enrollmentsProvider);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Payment failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isEnrolling = false);
+    }
   }
 }

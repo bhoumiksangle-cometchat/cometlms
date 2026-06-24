@@ -2,6 +2,7 @@ import { prisma } from '../../server';
 import { Enrollment } from './enrollment.model';
 import { Course } from '../courses/course.model';
 import { AppError } from '../../middleware/errorHandler';
+import { cometChatService } from '../../services/cometchat.service';
 
 export class EnrollmentService {
   public async enroll(userId: string, courseId: string) {
@@ -23,15 +24,14 @@ export class EnrollmentService {
     const enrollment = new Enrollment({ userId, courseId });
     const saved = await enrollment.save();
 
-    // Add user to course chat room if course has one
-    if (course.chatRoomId) {
-      await prisma.chatRoomMember.create({
-        data: {
-          roomId: course.chatRoomId,
-          userId,
-          role: 'member',
-        },
-      });
+    // Add user to CometChat course group if course has one
+    if (course.cometchatGroupId) {
+      try {
+        await cometChatService.addGroupMembers(course.cometchatGroupId, [{ uid: userId, scope: 'participant' }]);
+      } catch (err) {
+        // Non-critical: user can still access content even if group join fails
+        console.warn('[EnrollmentService] Failed to add user to CometChat group:', err);
+      }
     }
 
     return saved;

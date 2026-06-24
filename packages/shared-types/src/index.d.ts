@@ -73,7 +73,7 @@ export interface Course {
     level: CourseLevel;
     language: string;
     status: CourseStatus;
-    chatRoomId?: string;
+    cometchatGroupId?: string;
     createdAt: string;
     updatedAt: string;
     publishedAt?: string;

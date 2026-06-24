@@ -13,7 +13,7 @@ export class Course {
   level: string;
   language: string;
   status: string;
-  chatRoomId?: string;
+  cometchatGroupId?: string;
   createdAt: Date;
   updatedAt: Date;
   publishedAt?: Date;
@@ -41,7 +41,7 @@ export class Course {
     this.level = data.level;
     this.language = data.language;
     this.status = data.status || 'DRAFT';
-    this.chatRoomId = data.chatRoomId;
+    this.cometchatGroupId = data.cometchatGroupId;
     this.createdAt = data.createdAt || new Date();
     this.updatedAt = data.updatedAt || new Date();
     this.publishedAt = data.publishedAt;
@@ -62,7 +62,7 @@ export class Course {
         level: this.level,
         language: this.language,
         status: this.status,
-        chatRoomId: this.chatRoomId,
+        cometchatGroupId: this.cometchatGroupId,
         publishedAt: this.publishedAt,
         updatedAt: this.updatedAt = new Date(),
       },
@@ -79,7 +79,7 @@ export class Course {
         level: this.level,
         language: this.language,
         status: this.status,
-        chatRoomId: this.chatRoomId,
+        cometchatGroupId: this.cometchatGroupId,
         createdAt: this.createdAt,
         updatedAt: this.updatedAt,
         publishedAt: this.publishedAt,

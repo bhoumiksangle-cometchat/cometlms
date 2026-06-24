@@ -5,8 +5,42 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { requireAuth } from '../../middleware/auth';
 import { createDevUser, findDevUserByEmail, findDevUserById, isDevAuthStoreEnabled, toPublicDevUser } from './devAuthStore';
+import { cometChatService } from '../../services/cometchat.service';
+import { logger } from '../../lib/logger';
 
 export const authRoutes = Router();
+
+// Map an LMS user into CometChat: ensure the user exists, then mint an auth
+// token the client uses with loginWithAuthToken(). Best-effort — never blocks
+// or fails the LMS auth flow.
+async function syncCometChatUser(user: {
+  id: string;
+  name: string;
+  role?: string;
+  avatarUrl?: string | null;
+}): Promise<void> {
+  if (!cometChatService.isEnabled()) return;
+  try {
+    await cometChatService.createUser({
+      uid: user.id,
+      name: user.name,
+      avatar: user.avatarUrl ?? undefined,
+      role: user.role,
+    });
+  } catch (e) {
+    logger.warn('[Auth] CometChat user sync failed (non-fatal):', e);
+  }
+}
+
+async function mintCometChatToken(uid: string): Promise<string | null> {
+  if (!cometChatService.isEnabled()) return null;
+  try {
+    return await cometChatService.createAuthToken(uid);
+  } catch (e) {
+    logger.warn('[Auth] CometChat token mint failed (non-fatal):', e);
+    return null;
+  }
+}
 
 // Strip the bcrypt password hash (and any other server-only fields) before
 // serializing a User row out over the wire. Used by every auth response.
@@ -72,11 +106,15 @@ authRoutes.post('/dev-bypass-login', async (req, res, next) => {
       }
     }
 
+    await syncCometChatUser(user as any);
+    const cometchatAuthToken = await mintCometChatToken((user as any).id);
+
     res.json({
       success: true,
       data: {
         user: isDevAuthStoreEnabled() ? toPublicDevUser(user as any) : toPublicUser(user as any),
         tokens: createTokens(user),
+        cometchatAuthToken,
       },
     });
   } catch (error) {
@@ -90,7 +128,9 @@ authRoutes.post('/register', async (req, res, next) => {
 
     if (isDevAuthStoreEnabled()) {
       const user = await createDevUser(input);
-      res.status(201).json({ success: true, data: { user: toPublicDevUser(user), tokens: createTokens(user) } });
+      await syncCometChatUser(user);
+      const cometchatAuthToken = await mintCometChatToken(user.id);
+      res.status(201).json({ success: true, data: { user: toPublicDevUser(user), tokens: createTokens(user), cometchatAuthToken } });
       return;
     }
 
@@ -104,7 +144,10 @@ authRoutes.post('/register', async (req, res, next) => {
       },
     });
 
-    res.status(201).json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user) } });
+    await syncCometChatUser(user);
+    const cometchatAuthToken = await mintCometChatToken(user.id);
+
+    res.status(201).json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user), cometchatAuthToken } });
   } catch (error) {
     next(error);
   }
@@ -122,7 +165,9 @@ authRoutes.post('/login', async (req, res, next) => {
         return;
       }
 
-      res.json({ success: true, data: { user: toPublicDevUser(user), tokens: createTokens(user) } });
+      await syncCometChatUser(user);
+      const cometchatAuthToken = await mintCometChatToken(user.id);
+      res.json({ success: true, data: { user: toPublicDevUser(user), tokens: createTokens(user), cometchatAuthToken } });
       return;
     }
 
@@ -133,7 +178,12 @@ authRoutes.post('/login', async (req, res, next) => {
       return;
     }
 
-    res.json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user) } });
+    // Keep CometChat in sync (creates the user on first login if registration
+    // predates the integration) and mint a fresh auth token.
+    await syncCometChatUser(user);
+    const cometchatAuthToken = await mintCometChatToken(user.id);
+
+    res.json({ success: true, data: { user: toPublicUser(user), tokens: createTokens(user), cometchatAuthToken } });
   } catch (error) {
     next(error);
   }
@@ -158,15 +208,17 @@ authRoutes.post('/logout', requireAuth, (_req, res) => {
   res.json({ success: true });
 });
 
-authRoutes.post('/refresh', (req, res) => {
+authRoutes.post('/refresh', async (req, res) => {
   try {
     const refreshToken = z.object({ refreshToken: z.string() }).parse(req.body).refreshToken;
     const secret = process.env.JWT_REFRESH_SECRET ?? `${process.env.JWT_SECRET ?? 'dev-secret'}-refresh`;
     const payload = jwt.verify(refreshToken, secret) as jwt.JwtPayload & { role: string };
 
+    const cometchatAuthToken = await mintCometChatToken(payload.sub!);
+
     res.json({
       success: true,
-      data: createTokens({ id: payload.sub!, role: payload.role }),
+      data: { ...createTokens({ id: payload.sub!, role: payload.role }), cometchatAuthToken },
     });
   } catch {
     res.status(401).json({ success: false, error: 'Invalid refresh token' });

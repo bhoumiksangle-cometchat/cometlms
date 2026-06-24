@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@cometchat/calls-sdk-javascript": "^5.0.1",
+    "@cometchat/chat-sdk-javascript": "^4.1.11",
+    "@cometchat/chat-uikit-react": "^6.5.2",
     "@hookform/resolvers": "^3.4.2",
     "@lms/shared-types": "*",
     "@lms/shared-utils": "*",

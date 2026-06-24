@@ -6,7 +6,7 @@ import '../../../core/providers/auth_provider.dart';
 // Screens
 import '../../courses/screens/course_catalog_screen.dart';
 import '../../ai/screens/ai_assistant_screen.dart';
-import '../../chat/screens/dm_inbox_screen.dart';
+import '../../chat/screens/conversations_screen.dart';
 import '../../auth/screens/profile_screen.dart';
 import '../../instructor/screens/instructor_dashboard_screen.dart';
 

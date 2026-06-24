@@ -73,7 +73,7 @@ export function DownloadPage() {
         </a>
 
         <p style={{ color: '#555', fontSize: 12, marginTop: 12 }}>
-          Android 8.0+ · ~86 MB
+          Android 8.0+ · ~158 MB
         </p>
 
         {/* Steps */}

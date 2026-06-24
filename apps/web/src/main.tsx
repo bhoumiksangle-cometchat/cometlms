@@ -3,9 +3,11 @@ import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './features/auth/AuthContext';
-import { ChatProvider } from './features/chat/ChatProvider';
-import { CallManagerProvider } from './features/chat/CallManager';
+import { CometChatProvider } from './cometchat/CometChatProvider';
+import { CometChatCallOverlay } from './features/chat/CometChatCallOverlay';
 import { App } from './pages/index';
+import '@cometchat/chat-uikit-react/css-variables.css';
+import './cometchat/cometchat-overrides.css';
 import './styles.css';
 
 // Register Firebase Messaging service worker on app load
@@ -22,11 +24,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <ChatProvider>
-            <CallManagerProvider>
-              <App />
-            </CallManagerProvider>
-          </ChatProvider>
+          <CometChatProvider>
+            <CometChatCallOverlay />
+            <App />
+          </CometChatProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

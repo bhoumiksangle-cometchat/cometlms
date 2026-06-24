@@ -34,42 +34,6 @@ enum CourseLevel {
   ADVANCED
 }
 
-enum ChatRoomType {
-  GROUP
-  DM
-}
-
-enum MessageContentType {
-  TEXT
-  IMAGE
-  FILE
-  VOICE
-}
-
-enum ModerationStatus {
-  PENDING
-  DISMISSED
-  DELETED
-  ESCALATED
-}
-
-enum EventStatus {
-  RECEIVED
-  PROCESSED
-  FAILED
-}
-
-enum AgentType {
-  STUDY_ASSISTANT
-  FAQ_BOT
-  INSTRUCTOR_COPILOT
-}
-
-enum LLMProvider {
-  OPENAI
-  LANGCHAIN
-}
-
 enum PaymentStatus {
   PENDING
   COMPLETED
@@ -111,11 +75,6 @@ model User {
   taughtCourses     Course[]           @relation("InstructorCourses")
   enrollments       Enrollment[]
   lessonCompletions LessonCompletion[]
-  chatRoomMembers   ChatRoomMember[]
-  ownedChatRooms    ChatRoom[]
-  sentMessages      ChatMessage[]      @relation("SentMessages")
-  moderationLogs    ChatModerationLog[] @relation("ModerationLogs")
-  aiAgentConfigs    AiAgentConfig[]    @relation("BotUser")
   quizAttempts      QuizAttempt[]
   payments          Payment[]
   payouts           Payout[]
@@ -147,7 +106,7 @@ model Course {
   level         CourseLevel   @default(BEGINNER)
   language      String        @default("zh-CN")
   status        CourseStatus  @default(DRAFT)
-  chatRoomId    String?       @unique @map("chat_room_id")
+  cometchatGroupId String?    @unique @map("chat_room_id")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
   publishedAt   DateTime?     @map("published_at")
@@ -155,9 +114,7 @@ model Course {
   instructor    User          @relation("InstructorCourses", fields: [instructorId], references: [id])
   category      Category      @relation(fields: [categoryId], references: [id])
   sections      Section[]
-  chatRoom      ChatRoom?     @relation(fields: [chatRoomId], references: [roomId])
   enrollments   Enrollment[]
-  aiAgentConfigs AiAgentConfig[]
   engagementMetrics CourseEngagementMetrics[]
   payments      Payment[]
   reviews       Review[]
@@ -208,99 +165,8 @@ model LessonCompletion {
 }
 
 // ============================================
-// Chat Models
+// Engagement Metrics (fed by CometChat webhooks)
 // ============================================
-model ChatRoom {
-  id        String   @id @default(uuid())
-  roomId    String   @unique @map("room_id")
-  name      String
-  type      ChatRoomType @default(GROUP)
-  ownerId   String   @map("owner_id")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  owner     User           @relation(fields: [ownerId], references: [id])
-  course    Course?
-  members   ChatRoomMember[]
-  messages  ChatMessage[]
-}
-
-model ChatRoomMember {
-  id        String       @id @default(uuid())
-  roomId    String       @map("room_id")
-  userId    String       @map("user_id")
-  role      String       @default("member") // owner | member | bot
-  joinedAt  DateTime     @default(now()) @map("joined_at")
-  removedAt DateTime?    @map("removed_at")
-
-  room      ChatRoom     @relation(fields: [roomId], references: [id])
-  user      User         @relation(fields: [userId], references: [id])
-
-  @@unique([roomId, userId])
-}
-
-model ChatMessage {
-  id               String   @id @default(uuid())
-  roomId           String   @map("room_id")
-  senderId         String   @map("sender_id")
-  parentMessageId  String?  @map("parent_message_id")
-  content          String
-  contentType      MessageContentType @default(TEXT) @map("content_type")
-  isEdited         Boolean  @default(false) @map("is_edited")
-  isDeleted        Boolean  @default(false) @map("is_deleted")
-  metadata         Json?    // reactions, mentions, etc.
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
-
-  room      ChatRoom     @relation(fields: [roomId], references: [id])
-  sender    User         @relation("SentMessages", fields: [senderId], references: [id])
-  parent    ChatMessage? @relation("ThreadReplies", fields: [parentMessageId], references: [id])
-  replies   ChatMessage[] @relation("ThreadReplies")
-}
-
-model ChatModerationLog {
-  id              String           @id @default(uuid())
-  messageId       String           @map("message_id")
-  courseId        String?          @map("course_id")
-  senderId        String           @map("sender_id")
-  roomId          String           @map("room_id")
-  messagePreview  String           @map("message_preview")
-  flagReason      String           @map("flag_reason")
-  status          ModerationStatus @default(PENDING)
-  actionedBy      String?          @map("actioned_by")
-  actionedAt      DateTime?        @map("actioned_at")
-  createdAt       DateTime         @default(now()) @map("created_at")
-
-  sender          User             @relation("ModerationLogs", fields: [senderId], references: [id])
-}
-
-model ActivityEventLog {
-  id            String       @id @default(uuid())
-  eventType     String       @map("event_type")
-  payload       Json         @map("payload")
-  status        EventStatus  @default(RECEIVED)
-  errorMessage  String?      @map("error_message")
-  processedAt   DateTime?    @map("processed_at")
-  createdAt     DateTime     @default(now()) @map("created_at")
-}
-
-model AiAgentConfig {
-  id            String       @id @default(uuid())
-  courseId      String?      @map("course_id")
-  agentType     AgentType    @map("agent_type")
-  botUserId     String       @map("bot_user_id")
-  provider      LLMProvider
-  systemPrompt  String       @map("system_prompt")
-  modelName     String       @map("model_name")
-  isEnabled     Boolean      @default(true) @map("is_enabled")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
-
-  botUser       User         @relation("BotUser", fields: [botUserId], references: [id])
-  course        Course?      @relation(fields: [courseId], references: [id])
-}
-
 model CourseEngagementMetrics {
   id              String   @id @default(uuid())
   courseId        String   @map("course_id")

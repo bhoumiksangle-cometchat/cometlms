@@ -134,7 +134,7 @@ export function CourseDetail() {
             ) : (
               showManagement ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <button className="wide-button"><Settings size={16} /> Edit Course</button>
+                  <button className="wide-button" onClick={() => navigate(`/courses/${course.id}/edit`)}><Settings size={16} /> Edit Course</button>
                   <button 
                     onClick={() => navigate(`/courses/${course.id}/discussion`)}
                     className="wide-button" 

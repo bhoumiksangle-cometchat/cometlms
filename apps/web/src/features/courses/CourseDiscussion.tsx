@@ -1,16 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../lib/apiClient';
-import ChatWindow from '../chat/ChatWindow';
-import { useChatContext } from '../chat/useChatContext';
+import { CourseDiscussion as CourseDiscussionChat } from '../chat/CourseDiscussion';
 import { CourseQnA } from './CourseQnA';
-import { MessageSquare, HelpCircle, Wifi, WifiOff, FileText } from 'lucide-react';
+import { MessageSquare, HelpCircle, FileText } from 'lucide-react';
 
 interface CourseData {
   id: string;
   title: string;
-  chatRoomId: string | null;
+  cometchatGroupId: string | null;
 }
 
 type TabId = 'discussion' | 'qna' | 'notes';
@@ -18,23 +17,27 @@ type TabId = 'discussion' | 'qna' | 'notes';
 export function CourseDiscussion() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
-  const { socket } = useChatContext();
   // Allow ?tab=qna (or ?tab=discussion) to pre-select a tab on navigation
   const initialTab = (searchParams.get('tab') as TabId | null) ?? 'discussion';
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
-  // Track whether socket has been waiting too long (genuine connection failure)
-  const [socketTimedOut, setSocketTimedOut] = useState(false);
 
-  // Give the socket up to 8 s to connect before showing an error.
-  // If socket becomes available before the timer fires, clear the timeout.
-  useEffect(() => {
-    if (socket) {
-      setSocketTimedOut(false);
-      return;
-    }
-    const timer = setTimeout(() => setSocketTimedOut(true), 8000);
-    return () => clearTimeout(timer);
-  }, [socket]);
+  // ── Notes (localStorage per course) — hooks must be before any early returns ──
+  const NOTES_KEY = `lms_notes_${id}`;
+  const [notes, setNotes] = useState<string>(() => {
+    try { return localStorage.getItem(NOTES_KEY) ?? ''; } catch { return ''; }
+  });
+  const [notesSaved, setNotesSaved] = useState(true);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleNotesChange = (val: string) => {
+    setNotes(val);
+    setNotesSaved(false);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      try { localStorage.setItem(NOTES_KEY, val); } catch { /* quota exceeded */ }
+      setNotesSaved(true);
+    }, 600);
+  };
 
   const { data: course, isLoading, error } = useQuery({
     queryKey: ['course', id],
@@ -46,9 +49,9 @@ export function CourseDiscussion() {
     enabled: !!id,
   });
 
-  // Use the chatRoomId stored on the course if available, otherwise fall back to
-  // the well-known "course-<id>" convention used throughout the socket server.
-  const roomId = course?.chatRoomId || `course-${id}`;
+  // Use the cometchatGroupId stored on the course if available, otherwise fall back to
+  // the well-known "course-<id>" convention.
+  const roomId = course?.cometchatGroupId || `course-${id}`;
 
   // ── Loading course data ──────────────────────────────────────────────────────
   if (isLoading) {
@@ -73,24 +76,6 @@ export function CourseDiscussion() {
     );
   }
 
-  // ── Notes (localStorage per course) ──────────────────────────────────────
-  const NOTES_KEY = `lms_notes_${id}`;
-  const [notes, setNotes] = useState<string>(() => {
-    try { return localStorage.getItem(NOTES_KEY) ?? ''; } catch { return ''; }
-  });
-  const [notesSaved, setNotesSaved] = useState(true);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleNotesChange = (val: string) => {
-    setNotes(val);
-    setNotesSaved(false);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      try { localStorage.setItem(NOTES_KEY, val); } catch { /* quota exceeded */ }
-      setNotesSaved(true);
-    }, 600);
-  };
-
   // ── Tabs ─────────────────────────────────────────────────────────────────────
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'discussion', label: 'Live Discussion', icon: <MessageSquare size={15} /> },
@@ -99,7 +84,7 @@ export function CourseDiscussion() {
   ];
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: '#f9fafb' }}>
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '28px 16px' }}>
 
         {/* ── Page header ── */}
@@ -154,42 +139,13 @@ export function CourseDiscussion() {
             borderRadius: '0 0 16px 16px',
             boxShadow: '0 4px 20px rgba(0,0,0,0.07)',
             overflow: 'hidden',
-            height: 'calc(100vh - 260px)',
-            minHeight: 500,
+            height: 'min(calc(100vh - 300px), 600px)',
+            minHeight: 400,
           }}
         >
           {/* ── Discussion tab ── */}
           {activeTab === 'discussion' && (
-            <>
-              {socket ? (
-                <ChatWindow
-                  roomId={roomId}
-                  roomName={`${course.title} — Discussion`}
-                />
-              ) : socketTimedOut ? (
-                /* Connection genuinely failed */
-                <div style={{ ...centeredFlex, flexDirection: 'column', gap: 12, height: '100%' }}>
-                  <WifiOff size={48} color="#d97706" />
-                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#92400e' }}>Connection failed</h3>
-                  <p style={{ margin: 0, fontSize: 13, color: '#b45309', textAlign: 'center', maxWidth: 320 }}>
-                    Could not reach the chat server. Please check your connection and refresh the page.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    style={{ padding: '8px 18px', background: '#d97706', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-                  >
-                    Refresh page
-                  </button>
-                </div>
-              ) : (
-                /* Socket is still connecting — transient loading state */
-                <div style={{ ...centeredFlex, flexDirection: 'column', gap: 12, height: '100%' }}>
-                  <Wifi size={36} color="#10b981" style={{ opacity: 0.6 }} />
-                  <div style={spinner} />
-                  <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>Connecting to discussion…</p>
-                </div>
-              )}
-            </>
+            <CourseDiscussionChat groupId={roomId} />
           )}
 
           {/* ── Q&A tab ── */}
@@ -277,18 +233,12 @@ export function CourseDiscussion() {
 // ── Shared style helpers ────────────────────────────────────────────────────
 
 const centeredPage: React.CSSProperties = {
-  minHeight: '100vh',
+  flex: 1,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   flexDirection: 'column',
   background: '#f9fafb',
-};
-
-const centeredFlex: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
 };
 
 const spinner: React.CSSProperties = {

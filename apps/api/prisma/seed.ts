@@ -152,54 +152,18 @@ async function main() {
   });
   console.log('✅ Created Node.js course');
 
-  // Create chat rooms for courses
-  const reactChatRoom = await prisma.chatRoom.upsert({
-    where: { roomId: `course-${reactCourse.id}` },
-    update: {},
-    create: {
-      roomId: `course-${reactCourse.id}`,
-      name: `${reactCourse.title} - Discussion`,
-      type: 'GROUP',
-      ownerId: instructor.id,
-      isActive: true,
-      members: {
-        create: {
-          userId: instructor.id,
-          role: 'owner',
-        },
-      },
-    },
-  });
-
+  // Set CometChat group IDs for courses (groups are created in CometChat on publish)
   await prisma.course.update({
     where: { id: reactCourse.id },
-    data: { chatRoomId: reactChatRoom.roomId },
-  });
-
-  const nodeChatRoom = await prisma.chatRoom.upsert({
-    where: { roomId: `course-${nodeCourse.id}` },
-    update: {},
-    create: {
-      roomId: `course-${nodeCourse.id}`,
-      name: `${nodeCourse.title} - Discussion`,
-      type: 'GROUP',
-      ownerId: instructor.id,
-      isActive: true,
-      members: {
-        create: {
-          userId: instructor.id,
-          role: 'owner',
-        },
-      },
-    },
+    data: { cometchatGroupId: `course-${reactCourse.id}` },
   });
 
   await prisma.course.update({
     where: { id: nodeCourse.id },
-    data: { chatRoomId: nodeChatRoom.roomId },
+    data: { cometchatGroupId: `course-${nodeCourse.id}` },
   });
 
-  console.log('✅ Created chat rooms for courses');
+  console.log('✅ Set CometChat group IDs for courses');
 
   console.log('\n🎉 Database seeded successfully!');
   console.log('\n📝 Test accounts:');

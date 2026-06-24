@@ -1,0 +1,102 @@
+/* CometChat theme override — matches the LMS brand design system.
+ * Must load AFTER @cometchat/chat-uikit-react/css-variables.css
+ * (which is imported in main.tsx). */
+
+/* ═══════════════════════════════════════════════════
+   LIGHT MODE (default)
+═══════════════════════════════════════════════════ */
+.cometchat {
+  /* Brand primary — the LMS green */
+  --cometchat-primary-color: #24675d;
+  --cometchat-primary-button-background: #24675d;
+  --cometchat-primary-button-text: #ffffff;
+
+  /* Extended primary scale (tints/shades of #24675d) */
+  --cometchat-extended-primary-color-50: #eefaf6;
+  --cometchat-extended-primary-color-100: #d4f1e9;
+  --cometchat-extended-primary-color-200: #a8d9ce;
+  --cometchat-extended-primary-color-300: #76c1b3;
+  --cometchat-extended-primary-color-400: #4ea898;
+  --cometchat-extended-primary-color-500: #24675d;
+  --cometchat-extended-primary-color-600: #1d5349;
+  --cometchat-extended-primary-color-700: #163f37;
+  --cometchat-extended-primary-color-800: #0f2c25;
+  --cometchat-extended-primary-color-900: #081a14;
+
+  /* Backgrounds */
+  --cometchat-background-color-01: #ffffff;
+  --cometchat-background-color-02: #f8faf9;
+  --cometchat-background-color-03: #eef2f0;
+
+  /* Text */
+  --cometchat-text-color-primary: #172026;
+  --cometchat-text-color-secondary: #697873;
+
+  /* Borders */
+  --cometchat-border-color-light: #d7e0dc;
+  --cometchat-border-color-default: #c8d6d0;
+
+  /* Typography — match the LMS font stack */
+  --cometchat-font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Border radius — match the LMS 8px radius */
+  --cometchat-radius-1: 6px;
+  --cometchat-radius-2: 8px;
+  --cometchat-radius-3: 12px;
+  --cometchat-radius-max: 999px;
+
+  /* Neutral scale for incoming bubbles */
+  --cometchat-neutral-color-300: #eef2f0;
+
+  /* Status colors */
+  --cometchat-success-color: #10b981;
+  --cometchat-error-color: #dc2626;
+  --cometchat-warning-color: #f59e0b;
+  --cometchat-info-color: #3b82f6;
+  --cometchat-message-seen-color: #10b981;
+}
+
+/* ═══════════════════════════════════════════════════
+   DARK MODE (OS-driven)
+═══════════════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  .cometchat {
+    --cometchat-primary-color: #76c1b3;
+    --cometchat-primary-button-background: #24675d;
+    --cometchat-primary-button-text: #ffffff;
+
+    /* Backgrounds */
+    --cometchat-background-color-01: #16322f;
+    --cometchat-background-color-02: #1a3d38;
+    --cometchat-background-color-03: #214541;
+
+    /* Text */
+    --cometchat-text-color-primary: #f8fbf9;
+    --cometchat-text-color-secondary: #bed8d2;
+
+    /* Borders */
+    --cometchat-border-color-light: #37665f;
+    --cometchat-border-color-default: #2d5550;
+
+    /* Neutral scale for incoming bubbles (dark) */
+    --cometchat-neutral-color-300: #214541;
+
+    /* Status colors */
+    --cometchat-success-color: #34d399;
+    --cometchat-error-color: #f87171;
+    --cometchat-warning-color: #fbbf24;
+    --cometchat-info-color: #60a5fa;
+    --cometchat-message-seen-color: #34d399;
+
+    color-scheme: dark;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   RESPONSIVE ADJUSTMENTS
+═══════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .cometchat {
+    --cometchat-radius-2: 6px;
+  }
+}

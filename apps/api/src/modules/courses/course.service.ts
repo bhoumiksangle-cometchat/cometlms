@@ -1,7 +1,7 @@
 import { prisma } from '../../server';
 import { Course } from './course.model';
-import { ChatRoom } from '../chat/chat.model';
 import { AppError } from '../../middleware/errorHandler';
+import { cometChatService } from '../../services/cometchat.service';
 
 export class CourseService {
   public async getAll(options: {
@@ -48,7 +48,7 @@ export class CourseService {
           level: true,
           language: true,
           status: true,
-          chatRoomId: true,
+          cometchatGroupId: true,
           createdAt: true,
           updatedAt: true,
           publishedAt: true,
@@ -85,7 +85,7 @@ export class CourseService {
         level: true,
         language: true,
         status: true,
-        chatRoomId: true,
+        cometchatGroupId: true,
         createdAt: true,
         updatedAt: true,
         publishedAt: true,
@@ -115,7 +115,7 @@ export class CourseService {
         level: true,
         language: true,
         status: true,
-        chatRoomId: true,
+        cometchatGroupId: true,
         createdAt: true,
         updatedAt: true,
         publishedAt: true,
@@ -179,7 +179,7 @@ export class CourseService {
         level: true,
         language: true,
         status: true,
-        chatRoomId: true,
+        cometchatGroupId: true,
         createdAt: true,
         updatedAt: true,
         publishedAt: true,
@@ -214,29 +214,28 @@ export class CourseService {
       throw new AppError('Not authorized to publish this course', 403);
     }
 
-    // Create chat room for the course
-    const chatRoom = await prisma.chatRoom.create({
-      data: {
-        roomId: `course-${id}`,
+    // Create CometChat group for the course discussion
+    const groupGuid = `course-${id}`;
+    try {
+      await cometChatService.createGroup({
+        guid: groupGuid,
         name: course.title,
-        type: 'GROUP',
-        ownerId: userId,
-        members: {
-          create: {
-            userId,
-            role: 'owner',
-          },
-        },
-      },
-    });
+        type: 'public',
+      });
+    } catch (err: any) {
+      // Group may already exist if course was previously published
+      if (!err?.message?.includes('already exists')) {
+        console.warn('[CourseService] Failed to create CometChat group:', err);
+      }
+    }
 
-    // Update course with chat room ID and publish
+    // Update course with CometChat group ID and publish
     const publishedCourse = await prisma.course.update({
       where: { id },
       data: {
         status: 'PUBLISHED',
         publishedAt: new Date(),
-        chatRoomId: chatRoom.id,
+        cometchatGroupId: groupGuid,
       },
       select: {
         id: true,
@@ -251,7 +250,7 @@ export class CourseService {
         level: true,
         language: true,
         status: true,
-        chatRoomId: true,
+        cometchatGroupId: true,
         createdAt: true,
         updatedAt: true,
         publishedAt: true,

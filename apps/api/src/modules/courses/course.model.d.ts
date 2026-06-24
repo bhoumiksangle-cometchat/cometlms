@@ -11,7 +11,7 @@ export declare class Course {
     level: string;
     language: string;
     status: string;
-    chatRoomId?: string;
+    cometchatGroupId?: string;
     createdAt: Date;
     updatedAt: Date;
     publishedAt?: Date;

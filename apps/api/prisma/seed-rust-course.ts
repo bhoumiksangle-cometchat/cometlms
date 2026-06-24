@@ -164,25 +164,15 @@ async function main() {
   );
   console.log('✅ Rust sections created — section1:', (s1 as any).lessons?.length, 'lessons, section2:', (s2 as any).lessons?.length, 'lessons');
 
-  // ── chat room ───────────────────────────────────────────────────────────────
-  const roomId = `course-${rustCourse.id}`;
-  const chatRoom = await prisma.chatRoom.upsert({
-    where:  { roomId },
-    update: { isActive: true },
-    create: {
-      roomId,
-      name:    `${rustCourse.title} — Discussion`,
-      type:    'GROUP',
-      ownerId: instructor.id,
-      isActive: true,
-      members: { create: { userId: instructor.id, role: 'owner' } },
-    },
-  });
+  // ── CometChat group (set cometchatGroupId on course) ──────────────────────
+  // The CometChat group is created via the REST API when the course is published.
+  // Here we just record the guid in the DB so the frontend knows which group to join.
+  const groupGuid = `course-${rustCourse.id}`;
   await prisma.course.update({
     where: { id: rustCourse.id },
-    data:  { chatRoomId: chatRoom.roomId },
+    data:  { cometchatGroupId: groupGuid },
   });
-  console.log('✅ Chat room linked:', chatRoom.roomId);
+  console.log('✅ CometChat group guid linked:', groupGuid);
 
   // ── enroll test student ─────────────────────────────────────────────────────
   await prisma.enrollment.upsert({
@@ -190,67 +180,8 @@ async function main() {
     update: {},
     create: { userId: student.id, courseId: rustCourse.id },
   });
-  // chatRoom.id is the UUID; chatRoom.roomId is the string "course-xxx"
-  await prisma.chatRoomMember.upsert({
-    where:  { roomId_userId: { roomId: chatRoom.id, userId: student.id } },
-    update: { removedAt: null },
-    create: { roomId: chatRoom.id, userId: student.id, role: 'member' },
-  });
   console.log('✅ student@learnloop.test enrolled');
-
-  // ── seed discussion + Q&A messages ─────────────────────────────────────────
-  const msgCount = await prisma.chatMessage.count({
-    where: { roomId: chatRoom.id, senderId: instructor.id },
-  });
-  if (msgCount === 0) {
-    // Welcome announcement
-    await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: instructor.id,
-      content: '👋 Welcome to **Rust Systems Programming**! This is your space to ask questions, share discoveries, and help each other. Stuck on the borrow checker? Post it in Q&A — no question is too basic!',
-      contentType: 'TEXT',
-      metadata: { isAnnouncement: true, reactions: {}, readBy: [instructor.id], mentions: [] },
-    }});
-
-    // Second discussion message
-    await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: instructor.id,
-      content: 'Tip: set up `rust-analyzer` in your editor before starting Lesson 1. The inline type hints alone will teach you a lot about how Rust thinks about data.',
-      contentType: 'TEXT',
-      metadata: { reactions: {}, readBy: [instructor.id], mentions: [] },
-    }});
-
-    // Q&A question 1 + answer
-    const q1 = await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: student.id,
-      content: 'Do I need prior C or C++ experience before starting this course?',
-      contentType: 'TEXT',
-      metadata: { isQuestion: true, reactions: {}, readBy: [student.id], mentions: [] },
-    }});
-    await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: instructor.id, parentMessageId: q1.id,
-      content: 'No C/C++ experience needed! Prior experience with any statically-typed language (TypeScript, Java, Go) is helpful but not required. Lesson 1 starts from absolute basics. The ownership model is new to everyone — even C++ veterans have to unlearn things.',
-      contentType: 'TEXT',
-      metadata: { isAnswer: true, reactions: {}, readBy: [instructor.id], mentions: [] },
-    }});
-
-    // Q&A question 2 + answer
-    const q2 = await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: student.id,
-      content: 'What makes the borrow checker different from a garbage collector?',
-      contentType: 'TEXT',
-      metadata: { isQuestion: true, reactions: {}, readBy: [student.id], mentions: [] },
-    }});
-    await prisma.chatMessage.create({ data: {
-      roomId: chatRoom.id, senderId: instructor.id, parentMessageId: q2.id,
-      content: 'Great question — covered in depth in Lesson 3! Short answer: the borrow checker is a **compile-time** analysis. Zero runtime overhead, zero pauses, zero garbage. A GC makes memory-safety decisions at runtime while your program is running, which costs CPU and causes latency spikes. Rust gives you GC-level safety with C-level performance.',
-      contentType: 'TEXT',
-      metadata: { isAnswer: true, reactions: {}, readBy: [instructor.id], mentions: [] },
-    }});
-
-    console.log('✅ Discussion + Q&A seeded (2 questions, 2 answers, 2 messages)');
-  } else {
-    console.log('⏭️  Chat messages already exist, skipping');
-  }
+  // NOTE: Discussion messages are now managed by CometChat — no local ChatMessage seeding needed.
 
   // ════════════════════════════════════════════════════════════════════════════
   // 4.  ENROLL STUDENT IN ALL COURSES (ensures enrollment works everywhere)
@@ -261,26 +192,12 @@ async function main() {
       update: {},
       create: { userId: student.id, courseId: c.id },
     });
-    if (c.chatRoomId) {
-      // Resolve the ChatRoom UUID from its string roomId
-      const cr = await prisma.chatRoom.findUnique({
-        where: { roomId: c.chatRoomId },
-        select: { id: true },
-      });
-      if (cr) {
-        await prisma.chatRoomMember.upsert({
-          where:  { roomId_userId: { roomId: cr.id, userId: student.id } },
-          update: { removedAt: null },
-          create: { roomId: cr.id, userId: student.id, role: 'member' },
-        });
-      }
-    }
   }
   console.log('✅ student@learnloop.test enrolled in all 3 courses');
 
   console.log('\n🎉 All done!');
   console.log('  Rust course ID :', rustCourse.id);
-  console.log('  Chat room      :', roomId);
+  console.log('  CometChat group:', groupGuid);
   console.log('  Accounts       : student@learnloop.test / instructor@learnloop.test  (Password123)');
 }
 

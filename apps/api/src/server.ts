@@ -3,11 +3,9 @@ dotenv.config(); // Must run before any other imports that read process.env
 
 import express from 'express';
 import { createServer } from 'http';
-import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import { prisma } from './lib/prisma';
-import { setupSocketServer } from './modules/chat/socket.server';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
 import { authRoutes } from './modules/auth/auth.routes';
@@ -18,10 +16,10 @@ import { quizRoutes } from './modules/quizzes/quiz.routes';
 import { paymentRoutes } from './modules/payments/payment.routes';
 import { notificationRoutes } from './modules/notifications/notification.routes';
 import { adminRoutes } from './modules/admin/admin.routes';
-import { chatRoutes } from './modules/chat/chat.routes';
-import { callRoutes } from './modules/calls/calls.routes';
 import { categoryRoutes } from './modules/categories/categories.routes';
-import { processActivityEvents } from './modules/chat/eventProcessor';
+import { engagementWebhookRoutes } from './modules/chat/cometchat-webhook';
+import { moderationApiRoutes } from './modules/chat/moderation-api.routes';
+import { chatAgentsRoutes } from './modules/chat/agents.routes';
 import { scheduleRecurringJob, checkQueueHealth } from './lib/queue';
 import { pushDispatcherService } from './services/push-dispatcher.service';
 import './workers/notification.worker';
@@ -69,13 +67,18 @@ const corsOptions = {
   credentials: true,
 };
 
-const io = new SocketIOServer(httpServer, {
-  cors: corsOptions,
-});
-
 // Middleware
 app.use(helmet());
 app.use(cors(corsOptions));
+
+// Capture raw body for webhook HMAC verification before JSON parsing
+app.use('/api/webhooks/cometchat/events', express.json({
+  limit: '1mb',
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  },
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
@@ -99,15 +102,16 @@ app.use('/api/quizzes', quizRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/chat', chatRoutes);
-app.use('/api/calls', callRoutes);
+app.use('/api/admin/moderation', moderationApiRoutes);
+app.use('/api/chat', chatAgentsRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/webhooks/cometchat/events', engagementWebhookRoutes);
 
 // Error handling
 app.use(errorHandler);
 
-// Socket.IO
-setupSocketServer(io);
+// NOTE: Socket.IO removed — real-time messaging now handled by CometChat.
+// NOTE: socket.io dependency in package.json can be uninstalled when ready.
 
 const PORT = process.env.PORT || 3000;
 
@@ -115,7 +119,7 @@ httpServer.listen(PORT, async () => {
   console.log(`[LMS API] Server running on port ${PORT}`);
   console.log(`[LMS API] Environment: ${process.env.NODE_ENV || 'development'}`);
 
-  // Schedule event processing every minute using BullMQ
+  // Schedule recurring jobs using BullMQ
   try {
     await scheduleRecurringJob(
       'events',
@@ -127,18 +131,6 @@ httpServer.listen(PORT, async () => {
   } catch (error) {
     console.error('[LMS API] Failed to schedule recurring jobs:', error);
   }
-
-  // Keep the old setInterval as fallback if BullMQ is not available
-  setInterval(async () => {
-    try {
-      const result = await processActivityEvents();
-      if (result.processed > 0 || result.failed > 0) {
-        console.log(`[EventProcessor] Processed: ${result.processed}, Failed: ${result.failed}`);
-      }
-    } catch (error) {
-      console.error('[EventProcessor] Error processing events:', error);
-    }
-  }, 60000);
 });
 
-export { app, httpServer, io, prisma };
+export { app, httpServer, prisma };

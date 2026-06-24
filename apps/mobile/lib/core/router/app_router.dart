@@ -1,6 +1,9 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cometchat_chat_uikit/cometchat_chat_uikit.dart';
+import 'package:cometchat_chat_uikit/cometchat_calls_uikit.dart'
+    show CallNavigationContext;
 
 import '../providers/auth_provider.dart';
 
@@ -13,18 +16,21 @@ import '../../features/auth/screens/register_screen.dart';
 import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/courses/screens/course_details_screen.dart';
 import '../../features/courses/screens/course_player_screen.dart';
-import '../../features/chat/screens/chat_room_screen.dart';
-import '../../features/calls/screens/call_screen.dart';
+import '../../features/chat/screens/messages_screen.dart';
 import '../../features/notifications/screens/notifications_screen.dart';
+import '../../features/ai/screens/ai_assistant_screen.dart';
+import '../../features/quiz/screens/quiz_screen.dart';
+import '../../features/quiz/screens/quiz_result_screen.dart';
+import '../../features/instructor/screens/create_course_screen.dart';
 
 // Admin Screens
 import '../../features/admin/screens/admin_dashboard_screen.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authProvider);
-
   return GoRouter(
+    navigatorKey: CallNavigationContext.navigatorKey,
     initialLocation: '/splash',
+    refreshListenable: _AuthChangeNotifier(ref),
     routes: [
       GoRoute(
         path: '/splash',
@@ -65,28 +71,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
-        path: '/chat/:roomId',
+        path: '/messages',
         builder: (context, state) {
-          final roomId = state.pathParameters['roomId']!;
           final extra = state.extra as Map<String, dynamic>?;
-          return ChatRoomScreen(
-            roomId: roomId,
-            roomName: extra?['roomName'] ?? 'Chat',
-            otherUserId: extra?['otherUserId'],
-          );
-        },
-      ),
-      GoRoute(
-        path: '/call/:roomId',
-        builder: (context, state) {
-          final roomId = state.pathParameters['roomId']!;
-          final extra = state.extra as Map<String, dynamic>?;
-          return CallScreen(
-            roomId: roomId,
-            targetUserId: extra?['targetUserId'],
-            callId: extra?['callId'],
-            callType: extra?['callType'] ?? 'video',
-            isIncoming: extra?['isIncoming'] ?? false,
+          return MessagesScreen(
+            user: extra?['user'] as User?,
+            group: extra?['group'] as Group?,
           );
         },
       ),
@@ -98,8 +88,46 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/admin',
         builder: (context, state) => const AdminDashboardScreen(),
       ),
+      GoRoute(
+        path: '/ai-assistant',
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return AIAssistantScreen(
+            courseId: extra?['courseId'] as String?,
+            courseName: extra?['courseName'] as String?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/quiz/:id',
+        builder: (context, state) {
+          final quizId = state.pathParameters['id']!;
+          final extra = state.extra as Map<String, dynamic>?;
+          return QuizScreen(
+            quizId: quizId,
+            courseId: extra?['courseId'] as String?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/quiz/:id/result',
+        builder: (context, state) {
+          final quizId = state.pathParameters['id']!;
+          final extra = state.extra as Map<String, dynamic>?;
+          return QuizResultScreen(
+            quizId: quizId,
+            result: (extra?['result'] as Map<String, dynamic>?) ?? {},
+            courseId: extra?['courseId'] as String?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/instructor/create-course',
+        builder: (context, state) => const CreateCourseScreen(),
+      ),
     ],
     redirect: (context, state) {
+      final authState = ref.read(authProvider);
       final isLoggingIn = state.matchedLocation == '/login';
       final isRegistering = state.matchedLocation == '/register';
       final isSplash = state.matchedLocation == '/splash';
@@ -138,3 +166,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     },
   );
 });
+
+/// Listenable that notifies GoRouter when auth state changes,
+/// triggering re-evaluation of redirects WITHOUT recreating the GoRouter.
+class _AuthChangeNotifier extends ChangeNotifier {
+  _AuthChangeNotifier(this._ref) {
+    _ref.listen(authProvider, (_, __) {
+      notifyListeners();
+    });
+  }
+
+  final Ref _ref;
+}

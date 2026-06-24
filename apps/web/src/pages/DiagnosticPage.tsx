@@ -1,19 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../features/auth/useAuth';
-import { getSocket } from '../lib/socket';
 import { apiClient } from '../lib/apiClient';
 
 export function DiagnosticPage() {
   const { user, isAuthenticated } = useAuth();
-  const [socket, setSocket] = useState(getSocket());
   const [testResults, setTestResults] = useState<Record<string, any>>({});
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSocket(getSocket());
-    }, 500);
-    return () => clearInterval(interval);
-  }, []);
 
   const runTest = async (testName: string, testFn: () => Promise<any>) => {
     try {
@@ -31,39 +22,8 @@ export function DiagnosticPage() {
       role: user?.role,
       name: user?.name 
     }),
-    'Socket Connection': () => Promise.resolve({ 
-      connected: socket?.connected,
-      socketId: socket?.id,
-      hasSocket: !!socket,
-      socketInstance: socket ? 'Present' : 'Null'
-    }),
-    'Socket Ping Test': () => new Promise((resolve, reject) => {
-      console.log('[Diagnostic] Starting socket ping test');
-      if (!socket) {
-        console.error('[Diagnostic] No socket instance');
-        return reject(new Error('No socket instance'));
-      }
-      if (!socket.connected) {
-        console.error('[Diagnostic] Socket not connected');
-        return reject(new Error('Socket not connected'));
-      }
-      
-      console.log('[Diagnostic] Emitting ping...');
-      socket.emit('ping');
-      
-      const timeout = setTimeout(() => {
-        console.error('[Diagnostic] Ping timeout');
-        socket.off('pong', handlePong);
-        reject(new Error('Timeout waiting for pong'));
-      }, 3000);
-      
-      const handlePong = () => {
-        console.log('[Diagnostic] Received pong!');
-        clearTimeout(timeout);
-        resolve({ pong: true, timestamp: new Date().toISOString() });
-      };
-      
-      socket.once('pong', handlePong);
+    'CometChat Status': () => Promise.resolve({
+      note: 'CometChat handles real-time messaging and calls. Check browser console for CometChat logs.',
     }),
     'Enrollment API': () => apiClient.get('/api/enrollments/me'),
     'Courses API': () => apiClient.get('/api/courses'),
@@ -77,7 +37,7 @@ export function DiagnosticPage() {
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 16 }}>Quick Status</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
           <StatusCard title="Authentication" status={isAuthenticated} value={user?.name || 'Not logged in'} />
-          <StatusCard title="Socket" status={socket?.connected} value={socket?.id || 'Disconnected'} />
+          <StatusCard title="Real-time" status={true} value="CometChat" />
           <StatusCard title="User Role" status={!!user?.role} value={user?.role || 'N/A'} />
         </div>
       </div>
@@ -165,7 +125,7 @@ export function DiagnosticPage() {
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 16 }}>Console Logs</h2>
         <div style={{ background: '#1f2937', color: '#10b981', padding: 16, borderRadius: 8, fontSize: 13, fontFamily: 'monospace' }}>
           <p style={{ margin: 0 }}>Open browser console (F12) to see detailed logs.</p>
-          <p style={{ margin: '8px 0 0' }}>Look for logs starting with [Socket], [ChatProvider], [Dev Mode]</p>
+          <p style={{ margin: '8px 0 0' }}>Look for logs starting with [CometChat], [Auth], [Dev Mode]</p>
         </div>
       </div>
     </div>

@@ -1,0 +1,8 @@
+.cc-msg-list > .cometchat {
+  height: 100%;
+  overflow: hidden;
+}
+
+.cc-msg-list > .cometchat > * {
+  height: 100%;
+}

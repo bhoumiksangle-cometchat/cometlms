@@ -1,7 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cometchat_chat_uikit/cometchat_chat_uikit.dart';
+import 'package:cometchat_chat_uikit/cometchat_calls_uikit.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/auth_provider.dart';
+
+// Provider for instructor's courses
+final instructorCoursesProvider = FutureProvider<List<dynamic>>((ref) async {
+  final apiClient = ref.read(apiClientProvider);
+  final response = await apiClient.get('/api/courses/my-courses');
+  final data = response.data['data'] ?? response.data;
+  return data is List ? data : [];
+});
 
 class InstructorDashboardScreen extends ConsumerWidget {
   const InstructorDashboardScreen({super.key});
@@ -72,26 +83,107 @@ class InstructorDashboardScreen extends ConsumerWidget {
               'Set up a new curriculum, lessons, and assignments',
               Icons.add_to_photos_outlined,
               () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Course creator coming soon...')),
-                );
+                context.push('/instructor/create-course');
               },
             ),
             const SizedBox(height: 12),
             _buildActionTile(
               context,
               'Host Live Office Hours',
-              'Start a WebRTC call session for Q&A',
+              'Start a group video call for Q&A with students',
               Icons.video_call_outlined,
-              () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Starting live call room...')),
-                );
-              },
+              () => _showOfficeHoursDialog(context, ref),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  void _showOfficeHoursDialog(BuildContext context, WidgetRef ref) {
+    final coursesAsync = ref.read(instructorCoursesProvider);
+    coursesAsync.when(
+      data: (courses) {
+        if (courses.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No courses found. Create a course first.')),
+          );
+          return;
+        }
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.cardDark,
+            title: const Text('Select Course', style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: courses.length,
+                itemBuilder: (_, index) {
+                  final course = courses[index];
+                  final title = course['title'] ?? 'Untitled';
+                  final courseId = course['id']?.toString() ?? '';
+                  return ListTile(
+                    title: Text(title, style: const TextStyle(color: Colors.white)),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _startGroupCall(context, courseId);
+                    },
+                  );
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        );
+      },
+      loading: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Loading courses...')),
+        );
+      },
+      error: (e, _) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading courses: $e')),
+        );
+      },
+    );
+  }
+
+  void _startGroupCall(BuildContext context, String courseId) {
+    final groupId = 'course-$courseId';
+    CometChat.getGroup(
+      groupId,
+      onSuccess: (group) {
+        // Initiate a group video call
+        final call = Call(
+          receiverUid: group.guid,
+          receiverType: ReceiverTypeConstants.group,
+          type: CallTypeConstants.videoCall,
+        );
+        CometChat.initiateCall(
+          call,
+          onSuccess: (initiatedCall) {
+            debugPrint('[OfficeHours] Group call initiated for $groupId');
+          },
+          onError: (e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to start call: ${e.message}')),
+            );
+          },
+        );
+      },
+      onError: (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Group not found: ${e.message}')),
+        );
+      },
     );
   }
 

@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/user.dart';
 import '../network/api_client.dart';
-import '../network/socket_client.dart';
 import '../services/push_notification_service.dart';
+import '../cometchat/cometchat_service.dart';
 
 class AuthState {
   final User? user;
@@ -35,10 +35,9 @@ class AuthState {
 
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _apiClient;
-  final SocketClient _socketClient;
   final PushNotificationService _pushNotificationService;
 
-  AuthNotifier(this._apiClient, this._socketClient)
+  AuthNotifier(this._apiClient)
       : _pushNotificationService = PushNotificationService(apiClient: _apiClient),
         super(AuthState()) {
     tryAutoLogin();
@@ -55,12 +54,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
         final userData = response.data['data'] ?? response.data;
         final user = User.fromJson(userData);
         
-        _socketClient.connect(token);
-        
         state = AuthState(user: user, isAuthenticated: true);
         
         // Initialize push notifications after successful auto-login
         await _initializePushNotifications();
+
+        // Re-login to CometChat if session expired (uses UID in dev mode)
+        // TODO: In production, fetch a fresh CometChat auth token from backend
+        await _loginToCometChatWithUid(user.id);
       } else {
         state = AuthState(isAuthenticated: false);
       }
@@ -90,12 +91,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
         await _apiClient.saveTokens(accessToken, refreshToken);
         _apiClient.setToken(accessToken);
-        _socketClient.connect(accessToken);
 
         state = AuthState(user: user, isAuthenticated: true);
         
         // Initialize push notifications after successful login
         await _initializePushNotifications();
+
+        // Login to CometChat with auth token from backend
+        await _loginToCometChat(payload);
         
         return true;
       } else {
@@ -135,12 +138,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
         await _apiClient.saveTokens(accessToken, refreshToken);
         _apiClient.setToken(accessToken);
-        _socketClient.connect(accessToken);
 
         state = AuthState(user: user, isAuthenticated: true);
         
         // Initialize push notifications after successful registration
         await _initializePushNotifications();
+
+        // Login to CometChat with auth token from backend
+        await _loginToCometChat(payload);
         
         return true;
       } else {
@@ -162,6 +167,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       // Ignore errors during token removal — logout should always succeed
     }
+
+    // Unregister push token from CometChat BEFORE logout
+    try {
+      await _pushNotificationService.unregisterTokenFromCometChat();
+    } catch (_) {
+      // Ignore errors — logout should always succeed
+    }
+
+    // Logout from CometChat
+    try {
+      await CometChatService.instance.logout();
+    } catch (_) {
+      // Ignore CometChat logout errors — main logout should always succeed
+    }
     
     try {
       await _apiClient.post('/api/auth/logout');
@@ -171,7 +190,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
     
     await _apiClient.clearTokens();
     _apiClient.setToken(null);
-    _socketClient.disconnect();
     
     state = AuthState();
   }
@@ -179,7 +197,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Initialize push notifications after successful authentication.
   ///
   /// Requests permission, registers the FCM token with the backend,
-  /// and starts listening for token refresh events.
+  /// starts listening for token refresh events, and registers the
+  /// token with CometChat for chat push notifications.
   Future<void> _initializePushNotifications() async {
     try {
       await _pushNotificationService.requestPermission();
@@ -187,8 +206,43 @@ class AuthNotifier extends StateNotifier<AuthState> {
       _pushNotificationService.listenForTokenRefresh();
       _pushNotificationService.configureForegroundHandler();
       _pushNotificationService.configureNotificationTapHandler();
+
+      // Register FCM token with CometChat for chat push notifications
+      await _pushNotificationService.registerTokenWithCometChat();
     } catch (e) {
       debugPrint('🔔 [FCM] Push notification setup error: $e');
+    }
+  }
+
+  /// Login to CometChat using the auth token returned from the backend login response.
+  /// The backend (Task 2) returns `cometchatAuthToken` in the login payload.
+  Future<void> _loginToCometChat(Map<String, dynamic> payload) async {
+    try {
+      // TODO: The backend login endpoint (Task 2) returns cometchatAuthToken in the response.
+      // Once integrated, use: CometChatService.instance.loginWithAuthToken(token)
+      final cometchatAuthToken = payload['cometchatAuthToken'] as String?;
+      if (cometchatAuthToken != null && cometchatAuthToken.isNotEmpty) {
+        await CometChatService.instance.loginWithAuthToken(cometchatAuthToken);
+      } else {
+        // Fallback: login with UID in dev mode (remove in production)
+        final userId = payload['user']?['id'] as String?;
+        if (userId != null) {
+          await CometChatService.instance.loginWithUid(userId);
+        }
+      }
+    } catch (e) {
+      debugPrint('💬 [CometChat] Login error (non-fatal): $e');
+    }
+  }
+
+  /// Login to CometChat with UID (dev mode fallback for auto-login).
+  Future<void> _loginToCometChatWithUid(String uid) async {
+    try {
+      // Skip if already logged in
+      if (CometChatService.instance.loggedInUser != null) return;
+      await CometChatService.instance.loginWithUid(uid);
+    } catch (e) {
+      debugPrint('💬 [CometChat] Auto-login error (non-fatal): $e');
     }
   }
 }
@@ -198,12 +252,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient();
 });
 
-final socketClientProvider = Provider<SocketClient>((ref) {
-  return SocketClient();
-});
-
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final apiClient = ref.read(apiClientProvider);
-  final socketClient = ref.read(socketClientProvider);
-  return AuthNotifier(apiClient, socketClient);
+  return AuthNotifier(apiClient);
 });

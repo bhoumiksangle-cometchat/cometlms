@@ -12,20 +12,17 @@ class Message {
 }
 
 class AIAssistantScreen extends ConsumerStatefulWidget {
-  const AIAssistantScreen({super.key});
+  final String? courseId;
+  final String? courseName;
+
+  const AIAssistantScreen({super.key, this.courseId, this.courseName});
 
   @override
   ConsumerState<AIAssistantScreen> createState() => _AIAssistantScreenState();
 }
 
 class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
-  final List<Message> _messages = [
-    Message(
-      content: 'Hello! I am your AI Study Copilot. How can I help you learn today?',
-      isUser: false,
-      timestamp: DateTime.now(),
-    ),
-  ];
+  final List<Message> _messages = [];
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
   bool _isLoading = false;
@@ -36,6 +33,16 @@ class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
     'Help me prepare a study plan',
     'Explain binary search',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Set initial greeting based on context
+    final greeting = widget.courseName != null
+        ? 'Hello! I am your AI Study Copilot for "${widget.courseName}". Ask me anything about this course!'
+        : 'Hello! I am your AI Study Copilot. How can I help you learn today?';
+    _messages.add(Message(content: greeting, isUser: false, timestamp: DateTime.now()));
+  }
 
   @override
   void dispose() {
@@ -68,9 +75,19 @@ class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
 
     try {
       final apiClient = ref.read(apiClientProvider);
-      final response = await apiClient.post('/api/chat/agents/message', data: {
+      final Map<String, dynamic> requestData = {
         'prompt': text,
-      });
+      };
+
+      // Include course context if available
+      if (widget.courseId != null) {
+        requestData['courseId'] = widget.courseId;
+      }
+      if (widget.courseName != null) {
+        requestData['courseName'] = widget.courseName;
+      }
+
+      final response = await apiClient.post('/api/chat/agents/message', data: requestData);
 
       final data = response.data['data'];
       final String reply = data is Map
@@ -101,12 +118,33 @@ class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
       appBar: AppBar(
-        title: const Text('AI Study Copilot'),
+        title: Text(widget.courseName != null ? 'AI Copilot — ${widget.courseName}' : 'AI Study Copilot'),
         backgroundColor: AppColors.backgroundDark,
         elevation: 0,
       ),
       body: Column(
         children: [
+          // Course context indicator
+          if (widget.courseName != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: AppColors.primary.withOpacity(0.1),
+              child: Row(
+                children: [
+                  const Icon(Icons.school_outlined, size: 16, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Context: ${widget.courseName}',
+                      style: const TextStyle(color: AppColors.primary, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Chat Bubbles
           Expanded(
             child: ListView.builder(
@@ -200,7 +238,9 @@ class _AIAssistantScreenState extends ConsumerState<AIAssistantScreen> {
                     controller: _textController,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Ask your copilot anything...',
+                      hintText: widget.courseName != null
+                          ? 'Ask about this course...'
+                          : 'Ask your copilot anything...',
                       hintStyle: const TextStyle(color: AppColors.textSecondary),
                       border: InputBorder.none,
                     ),

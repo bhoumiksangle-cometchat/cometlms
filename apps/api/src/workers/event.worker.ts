@@ -1,7 +1,11 @@
 import { Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
-import { processActivityEvents } from '../modules/chat/eventProcessor';
 import { EventProcessingJob } from '../lib/queue';
+
+// NOTE: The old processActivityEvents from eventProcessor.ts was removed in the
+// CometChat migration (Task 12). Event processing is now handled by CometChat
+// webhooks → CourseEngagementMetrics. This worker is kept as a no-op placeholder
+// for the BullMQ recurring job schedule (which is harmless to leave running).
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
@@ -19,15 +23,14 @@ export const eventWorker = new Worker<EventProcessingJob>(
     console.log(`[EventWorker] Processing job ${job.id}`);
 
     try {
-      // Process all pending events from database
-      const result = await processActivityEvents();
-
-      console.log(`[EventWorker] Processed ${result.processed} events, ${result.failed} failed`);
+      // Event processing is now handled by CometChat webhooks.
+      // This worker is a no-op placeholder.
+      console.log(`[EventWorker] No-op — events handled by CometChat webhooks`);
       
       return {
         success: true,
-        processed: result.processed,
-        failed: result.failed,
+        processed: 0,
+        failed: 0,
         processedAt: new Date().toISOString(),
       };
     } catch (error) {

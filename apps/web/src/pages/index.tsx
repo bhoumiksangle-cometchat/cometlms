@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, Navigate } from 'react-router-dom';
 import { LoginPage, RegisterPage } from '../features/auth/AuthPages';
 import { useAuth } from '../features/auth/useAuth';
+import { useCometChat } from '../cometchat/CometChatProvider';
 import {
   Bell,
   Bot,
@@ -12,8 +13,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   MonitorUp,
-  Phone,
-  PhoneCall,
   PlayCircle,
   RefreshCw,
   Search,
@@ -22,21 +21,23 @@ import {
   Smartphone,
   Sparkles,
   Users,
-  Video,
 } from 'lucide-react';
 import { useAppStore, type WorkspaceView } from '../stores';
 import { CourseList, CourseDetail, LessonViewer, CourseDiscussion as CourseDiscussionPage, CourseQnA } from '../features/courses';
 import CreateCourse from '../features/courses/CreateCourse';
+import EditCourse from '../features/courses/EditCourse';
+import { OfficeHoursCall } from '../features/chat/OfficeHoursCall';
+import { JoinOfficeHoursButton } from '../features/chat/JoinOfficeHoursButton';
 import { AdminUsersPage } from '../features/admin';
-import DirectMessagesPage from '../features/chat/DirectMessagesPage';
+import { AdminModerationPage } from '../features/admin';
+import { AdminEngagementPage } from '../features/admin';
+import MessagesPage from '../features/chat/MessagesPage';
+import { CourseDiscussion as CourseDiscussionEmbed } from '../features/chat/CourseDiscussion';
 import { DiagnosticPage } from './DiagnosticPage';
 import { DownloadPage } from './DownloadPage';
-import ChatWindow from '../features/chat/ChatWindow';
 import { apiClient } from '../lib/apiClient';
 import { DevBypass } from '../components/DevBypass';
-import { useCallManager } from '../features/chat/CallManager';
 import { NotificationPrompt } from '../components/NotificationPrompt';
-import { notificationService } from '../lib/notifications';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
@@ -87,9 +88,12 @@ export function App() {
         <Route path="/instructor" element={<RoleGuard roles={['INSTRUCTOR']}><AppLayout><InstructorDashboard onNotice={() => {}} /></AppLayout></RoleGuard>} />
         <Route path="/admin" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminDashboard onNotice={() => {}} /></AppLayout></RoleGuard>} />
         <Route path="/admin/users" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminUsersPage /></AppLayout></RoleGuard>} />
+        <Route path="/admin/moderation" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminModerationPage /></AppLayout></RoleGuard>} />
+        <Route path="/admin/engagement" element={<RoleGuard roles={['ADMIN','SUPER_ADMIN']}><AppLayout><AdminEngagementPage /></AppLayout></RoleGuard>} />
         <Route path="/courses" element={isAuthenticated ? <AppLayout><CourseList /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/create" element={isAuthenticated ? <AppLayout><CreateCourse /></AppLayout> : <Navigate to='/login' replace />} />
-        <Route path="/messages" element={isAuthenticated ? <AppLayout><DirectMessagesPage /></AppLayout> : <Navigate to='/login' replace />} />
+        <Route path="/courses/:id/edit" element={isAuthenticated ? <AppLayout><EditCourse /></AppLayout> : <Navigate to='/login' replace />} />
+        <Route path="/messages" element={isAuthenticated ? <AppLayout><MessagesPage /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/:id" element={isAuthenticated ? <AppLayout><CourseDetail /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/:id/discussion" element={isAuthenticated ? <AppLayout><CourseDiscussionPage /></AppLayout> : <Navigate to='/login' replace />} />
         <Route path="/courses/:courseId/sections/:sectionId/lessons/:lessonId" element={isAuthenticated ? <AppLayout><LessonViewer /></AppLayout> : <Navigate to='/login' replace />} />
@@ -126,33 +130,82 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const activeCourse = courses[0];
   const [notice, setNotice] = useState('');
-  const [showNotificationStatus, setShowNotificationStatus] = useState(false);
-  const { startCall } = useCallManager();
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
 
-  const handleNotificationClick = async () => {
-    const permission = notificationService.getPermissionStatus();
-    
-    if (permission === 'granted') {
-      // Show a test notification
-      notificationService.show({
-        title: 'Test Notification',
-        body: 'Notifications are working! You\'ll receive alerts for new messages.',
-      });
-      setNotice('Test notification sent');
-    } else if (permission === 'default') {
-      // Request permission
-      const result = await notificationService.requestPermission();
-      if (result === 'granted') {
-        notificationService.show({
-          title: 'Notifications Enabled! 🎉',
-          body: 'You will now receive notifications for messages and mentions',
-        });
-        setNotice('Notifications enabled');
-      } else {
-        setNotice('Notification permission denied');
+  // Fetch unread count on mount and periodically
+  const fetchUnreadCount = useCallback(async () => {
+    try {
+      const res = await apiClient.get<any>('/api/notifications/unread/count');
+      if (res.success && res.data) {
+        setUnreadCount(res.data.count);
       }
-    } else {
-      setNotice('Notifications are blocked. Please enable them in your browser settings.');
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 30000); // poll every 30s
+    return () => clearInterval(interval);
+  }, [fetchUnreadCount]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!showNotifications) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.notification-dropdown-area')) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showNotifications]);
+
+  const fetchNotifications = async () => {
+    setNotifLoading(true);
+    try {
+      const res = await apiClient.get<any>('/api/notifications');
+      if (res.success && res.data) {
+        setNotifications(res.data);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+
+  const handleNotificationClick = () => {
+    if (!showNotifications) {
+      fetchNotifications();
+    }
+    setShowNotifications((prev) => !prev);
+  };
+
+  const markAsRead = async (notifId: string) => {
+    try {
+      await apiClient.patch(`/api/notifications/${notifId}/read`);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notifId ? { ...n, read: true } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch {
+      // silently fail
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      await apiClient.post('/api/notifications/mark-all-read');
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      setUnreadCount(0);
+    } catch {
+      // silently fail
     }
   };
 
@@ -182,6 +235,18 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               <span>Users</span>
             </button>
           )}
+          {(user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+            <button className="nav-button" onClick={() => navigate('/admin/moderation')}>
+              <ShieldAlert />
+              <span>Moderation</span>
+            </button>
+          )}
+          {(user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+            <button className="nav-button" onClick={() => navigate('/admin/engagement')}>
+              <MonitorUp />
+              <span>Engagement</span>
+            </button>
+          )}
         </nav>
 
       </aside>
@@ -192,34 +257,113 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="eyebrow">{user?.role?.toLowerCase()} workspace</span>
             <h1>{user?.role === 'ADMIN' ? 'Moderation Command Center' : activeCourse.title}</h1>
           </div>
-          <div className="topbar-actions">
+          <div className="topbar-actions" style={{ position: 'relative' }}>
             <div className="search">
               <Search aria-hidden />
               <input aria-label="Search" placeholder="Search courses, learners, messages" />
             </div>
+            <div className="notification-dropdown-area" style={{ position: 'relative' }}>
             <button 
               className="icon-button" 
               aria-label="Notifications" 
-              title="Manage notifications"
+              title="View notifications"
               onClick={handleNotificationClick}
-              onMouseEnter={() => setShowNotificationStatus(true)}
-              onMouseLeave={() => setShowNotificationStatus(false)}
               style={{ position: 'relative' }}
             >
               <Bell aria-hidden />
-              {showNotificationStatus && notificationService.getPermissionStatus() === 'granted' && (
+              {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: -4,
                   right: -4,
-                  width: 12,
-                  height: 12,
-                  background: '#10b981',
+                  minWidth: 18,
+                  height: 18,
+                  background: '#ef4444',
                   borderRadius: '50%',
-                  border: '2px solid #fff'
-                }} />
+                  border: '2px solid #fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: '#fff',
+                  padding: '0 4px',
+                }}>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
               )}
             </button>
+            {showNotifications && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 8,
+                  width: 360,
+                  maxHeight: 420,
+                  overflowY: 'auto',
+                  background: '#fff',
+                  borderRadius: 12,
+                  boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+                  border: '1px solid #e5e7eb',
+                  zIndex: 1000,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #e5e7eb' }}>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#111827' }}>Notifications</h3>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={markAllAsRead}
+                      style={{ background: 'none', border: 'none', color: '#10b981', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: '4px 8px' }}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                {notifLoading ? (
+                  <div style={{ padding: '24px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13 }}>Loading...</div>
+                ) : notifications.length === 0 ? (
+                  <div style={{ padding: '24px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13 }}>No notifications yet</div>
+                ) : (
+                  <div>
+                    {notifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => !notif.read && markAsRead(notif.id)}
+                        style={{
+                          padding: '12px 16px',
+                          borderBottom: '1px solid #f3f4f6',
+                          background: notif.read ? '#fff' : '#f0fdf4',
+                          cursor: notif.read ? 'default' : 'pointer',
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: notif.read ? 400 : 600, color: '#111827', lineHeight: 1.4 }}>
+                              {notif.title || notif.type || 'Notification'}
+                            </p>
+                            {notif.body && (
+                              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#6b7280', lineHeight: 1.3 }}>
+                                {notif.body.length > 80 ? notif.body.slice(0, 80) + '...' : notif.body}
+                              </p>
+                            )}
+                          </div>
+                          {!notif.read && (
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', flexShrink: 0, marginTop: 4 }} />
+                          )}
+                        </div>
+                        <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9ca3af' }}>
+                          {new Date(notif.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            </div>
           </div>
         </header>
         {notice && <div className="notice-bar" role="status">{notice}</div>}
@@ -246,7 +390,7 @@ function StudentDashboard({ onNotice }: { onNotice: (message: string) => void })
   const [activeCourse, setActiveCourse] = useState<any>(null);
 
   // Load real enrolled (or published) courses on mount so Discussion / Q&A
-  // use the correct chatRoomId from the database rather than a hardcoded mock.
+  // use the correct cometchatGroupId from the database rather than a hardcoded mock.
   useEffect(() => {
     const load = async () => {
       try {
@@ -440,6 +584,7 @@ function StudentDashboard({ onNotice }: { onNotice: (message: string) => void })
 
         <DirectMessages />
       </aside>
+      <JoinOfficeHoursButton />
     </div>
   );
 }
@@ -453,7 +598,7 @@ function InstructorDashboard({ onNotice }: { onNotice: (message: string) => void
         <DiscussionManager onNotice={onNotice} />
       </section>
       <aside className="stack">
-        <OfficeHours onNotice={onNotice} />
+        <OfficeHoursCall isInstructor onNotice={onNotice} />
         <InstructorCopilot onNotice={onNotice} />
         <DirectMessages />
       </aside>
@@ -586,7 +731,7 @@ function CoursePlayer({
 
   const lesson  = lessons[currentLesson] ?? null;
   const videoId = lesson ? videoIdForLesson(lesson, activeCourse?.id ?? '', currentLesson) : null;
-  const roomId  = activeCourse?.chatRoomId || `course-${activeCourse?.id || 'react-foundations'}`;
+  const roomId  = activeCourse?.cometchatGroupId || `course-${activeCourse?.id || 'react-foundations'}`;
 
   return (
     <section className="panel">
@@ -794,7 +939,7 @@ function CourseDiscussionWidget({
         )}
       </div>
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        <ChatWindow roomId={roomId} roomName={`${courseName || 'Course'} — Discussion`} />
+        <CourseDiscussionEmbed groupId={roomId} />
       </div>
     </div>
   );
@@ -873,11 +1018,40 @@ function AiStudyAssistant({ onNotice }: { onNotice: (message: string) => void })
   const [messages, setMessages] = useState<Array<{ sender: 'user' | 'assistant'; text: string }>>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [typingText, setTypingText] = useState('');
+  const { isChatLoggedIn } = useCometChat();
+
+  // Listen for incoming messages from the study-assistant bot
+  useEffect(() => {
+    if (!isChatLoggedIn) return;
+
+    const listenerId = 'ai-study-assistant-listener';
+
+    import('@cometchat/chat-sdk-javascript').then(({ CometChat }) => {
+      CometChat.addMessageListener(
+        listenerId,
+        new CometChat.MessageListener({
+          onTextMessageReceived: (message: any) => {
+            const senderUid = message.getSender?.()?.getUid?.() || message.sender?.uid;
+            if (senderUid === 'study-assistant') {
+              const text = message.getText?.() || message.data?.text || '';
+              setMessages((prev) => [...prev, { sender: 'assistant', text }]);
+              setIsLoading(false);
+            }
+          },
+        }),
+      );
+    });
+
+    return () => {
+      import('@cometchat/chat-sdk-javascript').then(({ CometChat }) => {
+        CometChat.removeMessageListener(listenerId);
+      });
+    };
+  }, [isChatLoggedIn]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !isChatLoggedIn) return;
 
     const userText = input.trim();
     setInput('');
@@ -885,32 +1059,17 @@ function AiStudyAssistant({ onNotice }: { onNotice: (message: string) => void })
     setIsLoading(true);
 
     try {
-      const response = await apiClient.post('/api/chat/agents/message', {
-        prompt: userText,
-        courseName: 'React Foundations',
-      });
+      const { CometChat } = await import('@cometchat/chat-sdk-javascript');
+      const receiverID = 'study-assistant';
+      const messageText = userText;
+      const receiverType = CometChat.RECEIVER_TYPE.USER;
 
-      if (response.success && response.data) {
-        const replyText = response.data.content;
-        
-        let currentText = '';
-        setTypingText('');
-        
-        for (let i = 0; i < replyText.length; i++) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          currentText += replyText[i];
-          setTypingText(currentText);
-        }
-        
-        setMessages((prev) => [...prev, { sender: 'assistant', text: replyText }]);
-        setTypingText('');
-      } else {
-        throw new Error(response.error || 'Failed to get AI response');
-      }
+      const textMessage = new CometChat.TextMessage(receiverID, messageText, receiverType);
+      await CometChat.sendMessage(textMessage);
+      // The reply will come in via the message listener above
     } catch (err: any) {
-      onNotice(`AI Tutor error: ${err.message || 'Server error'}`);
-      setMessages((prev) => [...prev, { sender: 'assistant', text: 'Sorry, I encountered an error. Please try again later.' }]);
-    } finally {
+      onNotice(`AI Study Assistant error: ${err.message || 'Failed to send message'}`);
+      setMessages((prev) => [...prev, { sender: 'assistant', text: 'Sorry, I encountered an error. Please try again.' }]);
       setIsLoading(false);
     }
   };
@@ -923,16 +1082,20 @@ function AiStudyAssistant({ onNotice }: { onNotice: (message: string) => void })
       </div>
       <p>Ask questions about course material, code, and concepts.</p>
       
+      {!isChatLoggedIn && (
+        <p className="text-sm text-gray-500">Connecting to chat...</p>
+      )}
+
       {messages.length > 0 && (
         <div className="chat-history space-y-2 mb-4 max-h-[250px] overflow-y-auto border-t border-b py-2 text-sm">
           {messages.map((m, idx) => (
             <div key={idx} style={{ margin: '8px 0', padding: '8px', borderRadius: '8px', backgroundColor: m.sender === 'user' ? '#e8f5e9' : '#f5f5f5', textAlign: m.sender === 'user' ? 'right' : 'left' }}>
-              <strong>{m.sender === 'user' ? 'You' : 'Assistant'}:</strong> {m.text}
+              <strong>{m.sender === 'user' ? 'You' : 'Study Assistant'}:</strong> {m.text}
             </div>
           ))}
-          {typingText && (
+          {isLoading && (
             <div style={{ margin: '8px 0', padding: '8px', borderRadius: '8px', backgroundColor: '#f5f5f5', textAlign: 'left' }}>
-              <strong>Assistant:</strong> {typingText}
+              <strong>Study Assistant:</strong> <em>Thinking...</em>
             </div>
           )}
         </div>
@@ -945,9 +1108,9 @@ function AiStudyAssistant({ onNotice }: { onNotice: (message: string) => void })
           onChange={(event) => setInput(event.target.value)} 
           placeholder="Ask a question..."
           className="flex-1 border rounded p-2 text-sm"
-          disabled={isLoading}
+          disabled={isLoading || !isChatLoggedIn}
         />
-        <button type="submit" className="send-button text-sm" disabled={isLoading || !input.trim()}>
+        <button type="submit" className="send-button text-sm" disabled={isLoading || !input.trim() || !isChatLoggedIn}>
           {isLoading ? 'Thinking...' : 'Ask'}
         </button>
       </form>
@@ -959,17 +1122,9 @@ function DirectMessages() {
   const [conversations, setConversations] = useState<any[]>([]);
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
-  const { startCall } = useCallManager();
 
-  useEffect(() => {
-    apiClient.getConversations()
-      .then((response) => {
-        if (response.success && response.data) {
-          setConversations(response.data);
-        }
-      })
-      .catch(() => {});
-  }, []);
+  // Old /api/chat/conversations endpoint removed — CometChat handles this now.
+  // The DM widget on the dashboard just links to /messages.
 
   return (
     <section className="panel">
@@ -1000,24 +1155,6 @@ function DirectMessages() {
                   <strong>{other?.name ?? conversation.name}</strong>
                   <span style={{ display: 'block', fontSize: '12px' }}>Direct message</span>
                 </div>
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  className="icon-button"
-                  title="Voice call"
-                  onClick={() => other && startCall(other.id, other.name, 'voice')}
-                  style={{ width: 32, height: 32 }}
-                >
-                  <Phone aria-hidden style={{ width: 14, height: 14 }} />
-                </button>
-                <button
-                  className="icon-button"
-                  title="Video call"
-                  onClick={() => other && startCall(other.id, other.name, 'video')}
-                  style={{ width: 32, height: 32 }}
-                >
-                  <Video aria-hidden style={{ width: 14, height: 14 }} />
-                </button>
               </div>
             </article>
           );
@@ -1415,19 +1552,6 @@ function DiscussionManager({ onNotice }: { onNotice: (message: string) => void }
           {mentioning ? 'Sending…' : '@all'}
         </button>
       </div>
-    </section>
-  );
-}
-
-function OfficeHours({ onNotice }: { onNotice: (message: string) => void }) {
-  return (
-    <section className="panel">
-      <div className="panel-title">
-        <Video aria-hidden />
-        <h2>Office Hours</h2>
-      </div>
-      <p>Start a room, notify enrolled students, and attach the recording after the session.</p>
-      <button className="wide-button" onClick={() => onNotice('Office hours session started and students notified')}>Start session</button>
     </section>
   );
 }

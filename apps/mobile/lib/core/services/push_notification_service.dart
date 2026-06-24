@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cometchat_chat_uikit/cometchat_chat_uikit.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -87,6 +88,20 @@ class PushNotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
+
+    // Create a dedicated call channel with max importance
+    const callChannel = AndroidNotificationChannel(
+      'call_channel',
+      'Incoming Calls',
+      description: 'Notifications for incoming voice and video calls',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(callChannel);
   }
 
   /// Called when a local notification is tapped by the user.
@@ -133,18 +148,81 @@ class PushNotificationService {
   /// Listen for FCM token refresh events.
   ///
   /// When the OS rotates the token, re-registers the new token with the
-  /// backend automatically.
+  /// backend automatically and updates CometChat registration.
   void listenForTokenRefresh() {
     _messaging.onTokenRefresh.listen((newToken) async {
       final platform = Platform.isIOS ? 'ios' : 'android';
       await _registerTokenWithBackend(newToken, platform);
+
+      // Also re-register with CometChat on token refresh
+      await registerTokenWithCometChat();
     });
+  }
+
+  /// Register the FCM/APNs token with CometChat so offline users receive
+  /// push notifications for new messages, mentions, and incoming calls.
+  Future<void> registerTokenWithCometChat() async {
+    try {
+      final token = await _messaging.getToken();
+      if (token == null) {
+        debugPrint('🔔 [CometChat Push] No FCM token available');
+        return;
+      }
+
+      debugPrint('🔔 [CometChat Push] Registering token with CometChat...');
+      debugPrint('🔔 [CometChat Push] Platform: ${Platform.isAndroid ? "Android" : "iOS"}');
+      debugPrint('🔔 [CometChat Push] Token: ${token.substring(0, 20)}...');
+
+      if (Platform.isAndroid) {
+        await CometChatNotifications.registerPushToken(
+          PushPlatforms.FCM_FLUTTER_ANDROID,
+          fcmToken: token,
+          providerId: 'fcm-provider',
+          onSuccess: (response) {
+            debugPrint('🔔 [CometChat Push] Token registered successfully: $response');
+          },
+          onError: (e) {
+            debugPrint('🔔 [CometChat Push] Registration FAILED: ${e.code} - ${e.message}');
+          },
+        );
+      } else if (Platform.isIOS) {
+        final apnsToken = await _messaging.getAPNSToken();
+        if (apnsToken != null) {
+          await CometChatNotifications.registerPushToken(
+            PushPlatforms.APNS_FLUTTER_DEVICE,
+            deviceToken: apnsToken,
+            providerId: 'apns-provider',
+            onSuccess: (response) {
+              debugPrint('🔔 [CometChat Push] APNs token registered: $response');
+            },
+            onError: (e) {
+              debugPrint('🔔 [CometChat Push] APNs registration FAILED: ${e.code} - ${e.message}');
+            },
+          );
+        } else {
+          debugPrint('🔔 [CometChat Push] No APNs token available');
+        }
+      }
+    } catch (e) {
+      debugPrint('🔔 [CometChat Push] Token registration exception: $e');
+    }
+  }
+
+  /// Unregister push token from CometChat before logout.
+  Future<void> unregisterTokenFromCometChat() async {
+    try {
+      await CometChatNotifications.unregisterPushToken();
+      debugPrint('🔔 [CometChat Push] Token unregistered');
+    } catch (e) {
+      debugPrint('🔔 [CometChat Push] Token unregister failed: $e');
+    }
   }
 
   /// Set up the foreground message listener.
   ///
   /// When an FCM message arrives while the app is in the foreground,
   /// displays a local notification using [flutter_local_notifications].
+  /// Detects CometChat push notifications and formats them appropriately.
   void configureForegroundHandler() {
     // On Android, FCM does NOT show a heads-up notification when the app is
     // in the foreground — must display manually via flutter_local_notifications.
@@ -152,24 +230,71 @@ class PushNotificationService {
       debugPrint('🔔 [FCM] Foreground message: ${message.notification?.title} / ${message.notification?.body}');
       debugPrint('🔔 [FCM] Data: ${message.data}');
 
-      final title = message.notification?.title ?? message.data['title'] ?? 'New notification';
-      final body  = message.notification?.body  ?? message.data['body']  ?? '';
+      final data = message.data;
 
-      _localNotifications.show(
-        message.hashCode,
-        title,
-        body,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'default_channel',
-            'Default Notifications',
-            importance: Importance.max,
-            priority: Priority.high,
-            showWhen: true,
+      // Check if this is a CometChat push notification
+      final isCometChatMessage = data.containsKey('type') &&
+          (data['type'] == 'chat' || data['type'] == 'call');
+      final isCallNotification = data['type'] == 'call';
+
+      String title;
+      String body;
+
+      if (isCometChatMessage) {
+        title = data['title'] ?? data['senderName'] ?? message.notification?.title ?? 'New message';
+        body = data['body'] ?? message.notification?.body ?? '';
+      } else {
+        title = message.notification?.title ?? data['title'] ?? 'New notification';
+        body = message.notification?.body ?? data['body'] ?? '';
+      }
+
+      // Use call channel with max priority for incoming calls
+      if (isCallNotification) {
+        final callType = data['callType'] ?? 'video';
+        body = callType == 'audio' ? 'Incoming voice call' : 'Incoming video call';
+
+        _localNotifications.show(
+          message.hashCode,
+          title,
+          body,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'call_channel',
+              'Incoming Calls',
+              importance: Importance.max,
+              priority: Priority.max,
+              category: AndroidNotificationCategory.call,
+              fullScreenIntent: true,
+              ongoing: true,
+              autoCancel: false,
+              visibility: NotificationVisibility.public,
+              playSound: true,
+              enableVibration: true,
+            ),
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,
+              presentSound: true,
+              interruptionLevel: InterruptionLevel.timeSensitive,
+            ),
           ),
-          iOS: DarwinNotificationDetails(),
-        ),
-      );
+        );
+      } else {
+        _localNotifications.show(
+          message.hashCode,
+          title,
+          body,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'default_channel',
+              'Default Notifications',
+              importance: Importance.max,
+              priority: Priority.high,
+              showWhen: true,
+            ),
+            iOS: DarwinNotificationDetails(),
+          ),
+        );
+      }
     });
   }
 
@@ -179,19 +304,67 @@ class PushNotificationService {
   /// 1. App was terminated and opened via notification tap.
   /// 2. App was in background and notification was tapped.
   ///
-  /// In both cases, navigates to the home screen.
+  /// For CometChat push notifications, navigates to the relevant chat screen.
+  /// Otherwise navigates to the home screen.
   void configureNotificationTapHandler() {
     // App opened from terminated state via notification
     FirebaseMessaging.instance.getInitialMessage().then((message) {
       if (message != null) {
-        _navigateToHome();
+        _handleNotificationNavigation(message);
       }
     });
 
     // App in background, notification tapped
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      _navigateToHome();
+      _handleNotificationNavigation(message);
     });
+  }
+
+  /// Route to the appropriate screen based on notification data.
+  ///
+  /// CometChat push data includes `receiverType` (user/group) and
+  /// `receiver` (uid/guid). Routes to the corresponding chat screen.
+  void _handleNotificationNavigation(RemoteMessage message) async {
+    final data = message.data;
+    final receiverType = data['receiverType'];
+    final receiver = data['receiver'];
+
+    if (receiverType == 'user' && receiver != null) {
+      // Resolve the full CometChat User object before navigating
+      try {
+        CometChat.getUser(
+          receiver,
+          onSuccess: (user) {
+            router?.push('/messages', extra: {'user': user});
+          },
+          onError: (_) {
+            // Fallback: create a minimal user object
+            final user = User(uid: receiver, name: receiver);
+            router?.push('/messages', extra: {'user': user});
+          },
+        );
+      } catch (_) {
+        final user = User(uid: receiver, name: receiver);
+        router?.push('/messages', extra: {'user': user});
+      }
+    } else if (receiverType == 'group' && receiver != null) {
+      // Resolve the full CometChat Group object before navigating
+      try {
+        CometChat.getGroup(
+          receiver,
+          onSuccess: (group) {
+            router?.push('/messages', extra: {'group': group});
+          },
+          onError: (_) {
+            _navigateToHome();
+          },
+        );
+      } catch (_) {
+        _navigateToHome();
+      }
+    } else {
+      _navigateToHome();
+    }
   }
 
   /// Navigate to the home screen (route '/').

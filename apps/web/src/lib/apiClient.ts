@@ -58,7 +58,7 @@ class ApiClient {
 
   // Auth endpoints
   async register(email: string, password: string, name: string, role?: 'STUDENT' | 'INSTRUCTOR') {
-    const response = await this.client.post<ApiResponse<{ user: any; tokens: { accessToken: string; refreshToken: string } }>>('/api/auth/register', {
+    const response = await this.client.post<ApiResponse<{ user: any; tokens: { accessToken: string; refreshToken: string }; cometchatAuthToken?: string | null }>>('/api/auth/register', {
       email,
       password,
       name,
@@ -68,7 +68,7 @@ class ApiClient {
   }
 
   async login(email: string, password: string) {
-    const response = await this.client.post<ApiResponse<{ user: any; tokens: { accessToken: string; refreshToken: string } }>>('/api/auth/login', {
+    const response = await this.client.post<ApiResponse<{ user: any; tokens: { accessToken: string; refreshToken: string }; cometchatAuthToken?: string | null }>>('/api/auth/login', {
       email,
       password,
     });
@@ -86,7 +86,7 @@ class ApiClient {
   }
 
   async refreshToken(refreshToken: string) {
-    const response = await this.client.post<ApiResponse<{ accessToken: string; refreshToken: string }>>('/api/auth/refresh', {
+    const response = await this.client.post<ApiResponse<{ accessToken: string; refreshToken: string; cometchatAuthToken?: string | null }>>('/api/auth/refresh', {
       refreshToken,
     });
     return response.data;

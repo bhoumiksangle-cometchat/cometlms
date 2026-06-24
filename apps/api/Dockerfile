@@ -47,7 +47,6 @@ RUN cd apps/api && npx tsup src/server.ts \
     --external bcryptjs \
     --external ioredis \
     --external bullmq \
-    --external socket.io \
     --external @sentry/node \
     --external @aws-sdk/client-s3 \
     --external openai \
@@ -55,7 +54,8 @@ RUN cd apps/api && npx tsup src/server.ts \
     --external @langchain/community \
     --external nodemailer \
     --external @sendgrid/mail \
-    --external winston
+    --external winston \
+    --external firebase-admin
 
 # --- Stage 3: Production runtime ---
 FROM node:20-alpine AS runtime

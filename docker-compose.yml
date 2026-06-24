@@ -46,7 +46,7 @@ services:
       start_period: 5s
 
   # ---------------------------------------------------------------------------
-  # API — Express + Socket.IO + Prisma
+  # API — Express + Prisma + CometChat
   # Exposed on port 3000 for:
   #   • Mobile app direct access  (https://cometlms-a.cometchat-staging.com → :3000)
   #   • Internal Nginx proxy      (web container → http://api:3000)
@@ -80,11 +80,12 @@ services:
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
-      # WebRTC ICE / TURN
-      STUN_URLS: ${STUN_URLS:-}
-      TURN_URLS: ${TURN_URLS:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      # CometChat Server-Side (REST API)
+      COMETCHAT_APP_ID: ${COMETCHAT_APP_ID}
+      COMETCHAT_REGION: ${COMETCHAT_REGION}
+      COMETCHAT_AUTH_KEY: ${COMETCHAT_AUTH_KEY}
+      COMETCHAT_REST_API_KEY: ${COMETCHAT_REST_API_KEY}
+      COMETCHAT_WEBHOOK_SECRET: ${COMETCHAT_WEBHOOK_SECRET:-}
     ports:
       - "3000:3000"
     networks:
@@ -98,7 +99,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Web — React SPA served by Nginx
-  # Nginx also reverse-proxies /api/* and /socket.io/* → api:3000
+  # Nginx reverse-proxies /api/* → api:3000
   # Port mapping: change left side if 80 is taken on the host (e.g. "8080:80")
   # ---------------------------------------------------------------------------
   web:
@@ -108,6 +109,11 @@ services:
       args:
         # Empty = same-origin; Nginx proxies /api → api:3000 inside Docker
         VITE_API_URL: ${VITE_API_URL:-}
+        # CometChat client-side credentials (baked into the React bundle)
+        VITE_COMETCHAT_APP_ID: ${COMETCHAT_APP_ID}
+        VITE_COMETCHAT_REGION: ${COMETCHAT_REGION}
+        VITE_COMETCHAT_AUTH_KEY: ${COMETCHAT_AUTH_KEY}
+        # Firebase Web SDK
         VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
         VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
         VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
@@ -129,35 +135,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
-  # ---------------------------------------------------------------------------
-  # coturn — STUN/TURN server for WebRTC video calling
-  #
-  # Binds on the host network so ICE candidates use the real public IP.
-  # Required ports (must be open in firewall/security groups):
-  #   3478/udp+tcp  — STUN + TURN
-  #   49152-65535/udp — TURN relay media range
-  #
-  # Set these in .env:
-  #   TURN_REALM=your.domain.com
-  #   TURN_USERNAME=<username>
-  #   TURN_PASSWORD=<password>
-  # ---------------------------------------------------------------------------
-  coturn:
-    image: coturn/coturn:latest
-    container_name: cometlms-coturn
-    restart: unless-stopped
-    network_mode: host
-    command:
-      - "--log-file=stdout"
-      - "--lt-cred-mech"
-      - "--fingerprint"
-      - "--no-multicast-peers"
-      - "--realm=${TURN_REALM:-cometlms-a.cometchat-staging.com}"
-      - "--user=${TURN_USERNAME:-cometlms}:${TURN_PASSWORD:-ChangeMeTurnSecret99}"
-      - "--min-port=49152"
-      - "--max-port=65535"
-      - "--listening-port=3478"
 
 volumes:
   postgres_data:
