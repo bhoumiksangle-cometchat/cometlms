@@ -9,7 +9,7 @@ services:
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
-    container_name: cometlms-postgres
+    container_name: ${STACK_PREFIX:-cometlms}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cometlms}
@@ -31,7 +31,7 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    container_name: cometlms-redis
+    container_name: ${STACK_PREFIX:-cometlms}-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -55,7 +55,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    container_name: cometlms-api
+    container_name: ${STACK_PREFIX:-cometlms}-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -86,8 +86,10 @@ services:
       COMETCHAT_AUTH_KEY: ${COMETCHAT_AUTH_KEY}
       COMETCHAT_REST_API_KEY: ${COMETCHAT_REST_API_KEY}
       COMETCHAT_WEBHOOK_SECRET: ${COMETCHAT_WEBHOOK_SECRET:-}
+    # Default "3000:3000" (CometLMS). For a parallel stack set API_PORT to a
+    # non-conflicting host port, e.g. API_PORT=127.0.0.1:3001
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3000}:3000"
     networks:
       - internal
     healthcheck:
@@ -120,7 +122,7 @@ services:
         VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
         VITE_FIREBASE_VAPID_KEY: ${VITE_FIREBASE_VAPID_KEY:-}
-    container_name: cometlms-web
+    container_name: ${STACK_PREFIX:-cometlms}-web
     restart: unless-stopped
     depends_on:
       api:
