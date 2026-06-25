@@ -1,0 +1,124 @@
+# =============================================================================
+# CometchaT — Production Docker Compose (Separate Deployment)
+# Usage:  cp .env.cometchat .env.cometchat && docker compose -f docker-compose.cometchat.yml up -d --build
+# Note: This runs alongside the original CometLMS deployment with different ports
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 (CometchaT)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cometchat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cometchat}
+      POSTGRES_USER: ${POSTGRES_USER:-cometchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cometchat_secret}
+    volumes:
+      - postgres_data_cometchat:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cometchat} -d ${POSTGRES_DB:-cometchat}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 (CometchaT)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: cometchat-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data_cometchat:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # API — Express + Socket.IO + Prisma (CometchaT)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: cometchat-api
+    restart: unless-stopped
+    # Published to localhost only so the host Nginx can proxy the API domain.
+    # Not exposed to the internet (bound to 127.0.0.1).
+    # Port changed from 3000 to 3001 to avoid conflict with original CometLMS
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cometchat}:${POSTGRES_PASSWORD:-cometchat_secret}@postgres:5432/${POSTGRES_DB:-cometchat}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:8081}
+      WEB_URL: ${WEB_URL:-http://localhost:8081}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Web — React (Nginx serves static bundle + proxies API/WS) (CometchaT)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: cometchat-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    # Port changed from 80 to 8081 to avoid conflict with original CometLMS (8080)
+    ports:
+      - "8081:80"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data_cometchat:
+    driver: local
+  redis_data_cometchat:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge
