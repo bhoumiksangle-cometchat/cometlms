@@ -6,12 +6,19 @@ import { errorHandler } from '../apps/api/src/middleware/errorHandler';
 
 // ── Mocks (hoisted before any imports) ───────────────────────────────────────
 
-// Prevent server.ts from starting an HTTP server / workers
-vi.mock('../apps/api/src/server', () => ({
-  prisma: {
-    course: { create: vi.fn() },
-  },
-}));
+// Prevent server.ts from starting an HTTP server / workers.
+// The production create handler runs inside prisma.$transaction(cb) and returns
+// the result of tx.course.update, so the mock must expose both create + update
+// and a $transaction that invokes the callback with that same tx object.
+vi.mock('../apps/api/src/server', () => {
+  const course = { create: vi.fn(), update: vi.fn() };
+  return {
+    prisma: {
+      course,
+      $transaction: vi.fn(async (cb: any) => cb({ course })),
+    },
+  };
+});
 
 // Bypass JWT auth — inject a fake INSTRUCTOR user onto req
 vi.mock('../apps/api/src/middleware/auth', () => ({
@@ -27,6 +34,7 @@ import { courseRoutes } from '../apps/api/src/modules/courses/course.routes';
 import { prisma } from '../apps/api/src/server';
 
 const mockCreate = vi.mocked(prisma.course.create);
+const mockUpdate = vi.mocked((prisma as any).course.update);
 
 // Helper: build a minimal Express app with course router + error handler
 const buildApp = () => {
@@ -59,6 +67,7 @@ describe('POST /api/courses — course creation', () => {
 
   afterEach(() => {
     mockCreate.mockReset();
+    mockUpdate.mockReset();
     if (savedDbUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = savedDbUrl;
   });
@@ -192,6 +201,9 @@ describe('POST /api/courses — course creation', () => {
     it('valid payload → 201 with created course', async () => {
       const created = { id: 'new-uuid', ...validPayload, instructorId: 'instructor-test', status: 'DRAFT' };
       mockCreate.mockResolvedValue(created as any);
+      // Handler returns the result of tx.course.update (the create result re-read
+      // with cometchatGroupId set), so the update mock drives the response body.
+      mockUpdate.mockResolvedValue(created as any);
       const res = await request(buildApp()).post('/api/courses').send(validPayload);
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
@@ -201,6 +213,7 @@ describe('POST /api/courses — course creation', () => {
     it('instructorId comes from auth token, not request body', async () => {
       const created = { id: 'c-1', ...validPayload, instructorId: 'instructor-test', status: 'DRAFT' };
       mockCreate.mockResolvedValue(created as any);
+      mockUpdate.mockResolvedValue(created as any);
       await request(buildApp()).post('/api/courses').send(validPayload);
       const callArg = mockCreate.mock.calls[0][0] as any;
       expect(callArg.data.instructorId).toBe('instructor-test');
