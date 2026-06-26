@@ -107,38 +107,10 @@ adminRoutes.get('/stats', async (_req, res, next) => {
   }
 });
 
-// Moderation is now handled by CometChat. These endpoints return empty data
-// and will be re-wired to CometChat's moderation API in a future iteration.
-adminRoutes.get('/moderation', async (_req, res) => {
-  res.json({
-    success: true,
-    data: [],
-    pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
-  });
-});
-
-adminRoutes.post('/moderation/:id/dismiss', async (_req, res) => {
-  // Moderation actions are now handled via CometChat dashboard/API
-  res.json({ success: true, data: { message: 'Moderation is now handled by CometChat' } });
-});
-
-adminRoutes.post('/moderation/:id/ban', async (req, res, next) => {
-  try {
-    // We can still ban users locally even though moderation flags come from CometChat
-    const userId = req.body.userId;
-    if (!userId) {
-      res.status(400).json({ success: false, error: 'userId is required' });
-      return;
-    }
-    const user = await prisma.user.update({
-      where: { id: userId },
-      data: { isActive: false },
-    });
-    res.json({ success: true, data: user });
-  } catch (error) {
-    next(error);
-  }
-});
+// NOTE: Moderation is served by `moderationApiRoutes` (modules/chat/moderation-api.routes.ts),
+// which proxies CometChat's moderation API and is mounted at `/api/admin/moderation`
+// BEFORE this router in server.ts. The previous empty placeholder handlers were
+// removed because they shadowed the real CometChat-backed endpoints.
 
 // Activity events are now tracked via CometChat webhooks → CourseEngagementMetrics
 adminRoutes.get('/events/log', async (_req, res) => {

@@ -116,6 +116,33 @@ export interface CreateUserInput {
   avatar?: string | null;
   role?: string;
   metadata?: Record<string, unknown>;
+  /** Extra CometChat tags to attach in addition to the derived `role:*` tag. */
+  tags?: string[];
+}
+
+/**
+ * Build the CometChat user tags for an LMS user. The LMS role is encoded as a
+ * `role:<role>` tag (e.g. `role:instructor`) so users can be segmented and
+ * queried by role through CometChat's native tag filtering — this is how
+ * role-based access/discovery is expressed using CometChat concepts. Any extra
+ * tags supplied by the caller are merged in and de-duplicated.
+ */
+export function buildUserTags(role?: string, extra?: string[]): string[] | undefined {
+  const tags = new Set<string>();
+  if (role) tags.add(`role:${role.toLowerCase()}`);
+  for (const t of extra ?? []) {
+    if (t && t.trim()) tags.add(t.trim());
+  }
+  return tags.size ? Array.from(tags) : undefined;
+}
+
+/** Build the CometChat tags for a course discussion group. */
+export function buildCourseGroupTags(courseId: string, extra?: string[]): string[] {
+  const tags = new Set<string>(['type:course', `course:${courseId}`]);
+  for (const t of extra ?? []) {
+    if (t && t.trim()) tags.add(t.trim());
+  }
+  return Array.from(tags);
 }
 
 /**
@@ -132,17 +159,22 @@ async function createUser(input: CreateUserInput): Promise<CometChatRequestResul
   // so the LMS role is stored in freeform metadata instead.
   const metadata = buildUserMetadata(input.role, input.metadata);
   if (metadata) body.metadata = metadata;
+  // The LMS role is ALSO exposed as a queryable `role:*` tag (CometChat tags
+  // support native filtering, unlike freeform metadata).
+  const tags = buildUserTags(input.role, input.tags);
+  if (tags) body.tags = tags;
 
   const res = await request('/users', { method: 'POST', body, quiet: true });
   if (res.ok) return res;
 
-  // Already exists -> update instead (keeps name/avatar in sync).
+  // Already exists -> update instead (keeps name/avatar/role tags in sync).
   if (res.status === 409 || res.error?.code === 'ERR_UID_ALREADY_EXISTS') {
     return updateUser(input.uid, {
       name: input.name,
       avatar: input.avatar ?? undefined,
       role: input.role,
       metadata: input.metadata,
+      tags: input.tags,
     });
   }
 
@@ -160,13 +192,15 @@ function buildUserMetadata(
 
 async function updateUser(
   uid: string,
-  updates: { name?: string; avatar?: string; role?: string; metadata?: Record<string, unknown> },
+  updates: { name?: string; avatar?: string; role?: string; metadata?: Record<string, unknown>; tags?: string[] },
 ): Promise<CometChatRequestResult> {
   const body: Record<string, unknown> = {};
   if (updates.name !== undefined) body.name = updates.name;
   if (updates.avatar !== undefined) body.avatar = updates.avatar;
   const metadata = buildUserMetadata(updates.role, updates.metadata);
   if (metadata !== undefined) body.metadata = metadata;
+  const tags = buildUserTags(updates.role, updates.tags);
+  if (tags !== undefined) body.tags = tags;
   return request(`/users/${encodeURIComponent(uid)}`, { method: 'PUT', body });
 }
 
@@ -206,6 +240,8 @@ export interface CreateGroupInput {
   type?: 'public' | 'private' | 'password';
   owner?: string;
   metadata?: Record<string, unknown>;
+  /** CometChat tags used to segment/query groups (e.g. `type:course`). */
+  tags?: string[];
 }
 
 async function createGroup(input: CreateGroupInput): Promise<CometChatRequestResult> {
@@ -216,13 +252,14 @@ async function createGroup(input: CreateGroupInput): Promise<CometChatRequestRes
   };
   if (input.owner) body.owner = input.owner;
   if (input.metadata) body.metadata = input.metadata;
+  if (input.tags?.length) body.tags = input.tags;
 
   const res = await request('/groups', { method: 'POST', body, quiet: true });
   if (res.ok) return res;
 
   if (res.status === 409 || res.error?.code === 'ERR_GUID_ALREADY_EXISTS') {
     // Re-activate / sync existing group.
-    return updateGroup(input.guid, { name: input.name, metadata: input.metadata });
+    return updateGroup(input.guid, { name: input.name, metadata: input.metadata, tags: input.tags });
   }
 
   logger.warn(`[CometChat] createGroup(${input.guid}) failed: ${res.error?.message}`);
@@ -231,11 +268,12 @@ async function createGroup(input: CreateGroupInput): Promise<CometChatRequestRes
 
 async function updateGroup(
   guid: string,
-  updates: { name?: string; metadata?: Record<string, unknown> },
+  updates: { name?: string; metadata?: Record<string, unknown>; tags?: string[] },
 ): Promise<CometChatRequestResult> {
   const body: Record<string, unknown> = {};
   if (updates.name !== undefined) body.name = updates.name;
   if (updates.metadata !== undefined) body.metadata = updates.metadata;
+  if (updates.tags?.length) body.tags = updates.tags;
   return request(`/groups/${encodeURIComponent(guid)}`, { method: 'PUT', body });
 }
 
@@ -336,6 +374,24 @@ async function getUsersStatus(uids: string[]): Promise<CometChatRequestResult> {
   return request(`/users?${params.toString()}`);
 }
 
+/**
+ * List CometChat users carrying any of the given tags (e.g. `role:instructor`).
+ * Demonstrates querying users by their role tag — the server-side counterpart of
+ * the role filter in the web Users list. Returns the matching user objects.
+ */
+async function listUsersByTags(
+  tags: string[],
+  opts?: { perPage?: number },
+): Promise<CometChatRequestResult> {
+  if (tags.length === 0) return { ok: true, status: 200, data: [] };
+  const params = new URLSearchParams({
+    tags: tags.join(','),
+    withTags: 'true',
+    perPage: String(opts?.perPage ?? 100),
+  });
+  return request(`/users?${params.toString()}`, { quiet: true });
+}
+
 export const cometChatService = {
   isEnabled: isCometChatEnabled,
   // users
@@ -345,6 +401,7 @@ export const cometChatService = {
   createAuthToken,
   getUser,
   getUsersStatus,
+  listUsersByTags,
   // groups
   createGroup,
   updateGroup,

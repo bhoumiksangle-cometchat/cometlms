@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { prisma } from '../../server';
 import { addNotificationJob } from '../../lib/queue';
-import { cometChatService, courseGroupGuid } from '../../services/cometchat.service';
+import { cometChatService, courseGroupGuid, buildCourseGroupTags } from '../../services/cometchat.service';
 import { logger } from '../../lib/logger';
 
 export const courseRoutes = Router();
@@ -45,6 +45,7 @@ async function provisionCourseGroup(course: {
       type: 'public',
       owner: course.instructorId,
       metadata: { lmsCourseId: course.id, lmsStatus: 'active' },
+      tags: buildCourseGroupTags(course.id),
     });
     // Belt-and-suspenders: ensure the instructor is an admin member.
     await cometChatService.addGroupMembers(guid, [{ uid: course.instructorId, scope: 'admin' }]);

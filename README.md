@@ -1,6 +1,8 @@
 # CometLMS
 
-A production-grade Learning Management System (LMS) built with React, TypeScript, Express, PostgreSQL, Redis, Socket.IO, AI-powered assistants, and real-time communication features.
+A production-grade Learning Management System (LMS) built with React, TypeScript, Express, PostgreSQL, Redis, and a Flutter mobile app. Real-time chat, group discussions, and voice/video calling are powered by **CometChat** (Phase 2); the platform also ships FCM push notifications and AI assistants.
+
+> **Two-phase project.** Phase 1 (branch `main`) is the standalone production LMS — auth, RBAC, courses, quizzes, FCM push, admin dashboard. Phase 2 (branch `cometchat`) integrates CometChat for messaging, calling, moderation, AI agents, and webhooks **without breaking the existing Phase-1 workflows**. See [docs/DECISION_LOG.md](docs/DECISION_LOG.md) for what changed and why.
 
 ## Overview
 
@@ -21,6 +23,41 @@ The platform combines:
 - AI moderation and content safety
 - Instructor productivity tools
 - Advanced administration and analytics
+
+---
+
+## Documentation
+
+All project documentation lives in [`docs/`](docs/):
+
+| Document | Purpose |
+|----------|---------|
+| [SCOPE_OF_WORK.md](docs/SCOPE_OF_WORK.md) | Requirements / scope of work |
+| [API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) | REST API reference |
+| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md) | Schema, entities, migrations |
+| [NOTIFICATION_FLOW.md](docs/NOTIFICATION_FLOW.md) | App FCM push + CometChat push |
+| [COMETCHAT_INTEGRATION.md](docs/COMETCHAT_INTEGRATION.md) | CometChat architecture & sync |
+| [COMETCHAT_SKILLS_USAGE.md](docs/COMETCHAT_SKILLS_USAGE.md) | How CometChat Skills were used |
+| [COMETCHAT_WEBHOOKS.md](docs/COMETCHAT_WEBHOOKS.md) | Webhook endpoint & engagement analytics |
+| [DECISION_LOG.md](docs/DECISION_LOG.md) | Decisions, alternates, trade-offs |
+| [TESTING_NOTES.md](docs/TESTING_NOTES.md) | Test suite, results, known issues |
+| [DEMO_GUIDE.md](docs/DEMO_GUIDE.md) | Reproducible 20-step demo script |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker / EC2 deployment |
+| [PROJECT_REPORT.md](PROJECT_REPORT.md) | Deliverables & acceptance-criteria status |
+
+---
+
+## CometChat Integration (Phase 2)
+
+Real-time messaging, calling, moderation, and AI agents are delivered by CometChat:
+
+- **Web** — CometChat React UI Kit v6 (`@cometchat/chat-uikit-react`) for 1-1 chat, per-course group discussions, and office-hours video calls.
+- **Mobile** — CometChat Flutter UI Kit v6 (`cometchat_chat_uikit`) with the same surfaces + CometChat push.
+- **Server** — an idempotent REST sync service (`apps/api/src/services/cometchat.service.ts`) provisions a CometChat user (UID = `User.id`) and mints an auth token on register/login/refresh, and creates one group per course (`course-{id}`).
+- **Webhook** — `POST /api/webhooks/cometchat/events` (HMAC-verified) feeds per-course engagement analytics visible on the Admin Engagement dashboard.
+- **Skills** — built with CometChat's AI-agent "Skills" (committed under `apps/mobile/.agents/skills/` + `skills-lock.json`). See [COMETCHAT_SKILLS_USAGE.md](docs/COMETCHAT_SKILLS_USAGE.md).
+
+The existing Phase-1 FCM push pipeline continues to run **alongside** CometChat push — see [NOTIFICATION_FLOW.md](docs/NOTIFICATION_FLOW.md).
 
 ---
 
@@ -109,8 +146,9 @@ The platform combines:
 - Zustand
 - TanStack Query
 - Tailwind CSS
-- shadcn/ui
-- Socket.IO Client
+- CometChat React UI Kit v6 (`@cometchat/chat-uikit-react`)
+- CometChat Chat + Calls SDK
+- Firebase Web SDK (FCM push)
 - React Hook Form
 - Zod
 - Vite
@@ -119,16 +157,15 @@ The platform combines:
 
 - Node.js 20
 - Express.js
-- Socket.IO
 - JWT Authentication
 - Prisma ORM
-- BullMQ
-- Redis
-- OpenAI SDK
-- LangChain
-- Multer
-- AWS S3
-- SendGrid
+- BullMQ + Redis (job queue)
+- CometChat REST API (server-side user/group sync)
+- firebase-admin (FCM push dispatch)
+- Groq via OpenAI-compatible SDK (AI assistants)
+- Winston (logging)
+
+> Mobile: **Flutter** (`apps/mobile`) with Riverpod, go_router, CometChat Flutter UI Kit v6, and FCM.
 
 ### Database & Infrastructure
 
@@ -164,20 +201,20 @@ cometlms/
 ## Architecture
 
 ```text
-React Web App
-      │
-      │ REST + WebSocket
-      ▼
-Express API + Socket.IO
-      │
- ┌────┴────┐
- │         │
- ▼         ▼
-Postgres  Redis
- │
+ React Web App / Flutter Mobile App
+        │                  │
+        │ REST (JWT)       │ CometChat SDK + UI Kit
+        ▼                  ▼
+   Express API ──────► CometChat Cloud
+        │   ▲                │
+        │   │ webhook (HMAC) │
+ ┌──────┴───┴─┐              │
+ │            │              ▼
+ ▼            ▼          Chat / Calls /
+Postgres    Redis        Moderation / AI Agents
+ │           (BullMQ)
  ▼
-AI Services
-(groq)
+Groq (AI assistants) · FCM (push)
 ```
 
 ---
@@ -258,6 +295,8 @@ AI Services
 
 ## Environment Variables
 
+> The authoritative, complete sample is [`.env.example`](.env.example). The blocks below are an overview — copy `.env.example` to `.env` and fill in the values.
+
 ### Backend
 
 ```env
@@ -270,14 +309,21 @@ REDIS_URL=
 JWT_SECRET=
 JWT_REFRESH_SECRET=
 
-OPENAI_API_KEY=
+# AI assistants (Groq, OpenAI-compatible)
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
 
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_REGION=
-AWS_S3_BUCKET=
+# CometChat (REST key + webhook secret are server-side only)
+COMETCHAT_APP_ID=
+COMETCHAT_REGION=in
+COMETCHAT_AUTH_KEY=
+COMETCHAT_REST_API_KEY=
+COMETCHAT_WEBHOOK_SECRET=
 
-SENDGRID_API_KEY=
+# Firebase Admin (FCM push dispatch)
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
 
 CLIENT_URL=
 WEB_URL=
@@ -288,14 +334,18 @@ FRONTEND_URL=
 
 ```env
 VITE_API_URL=
-VITE_SOCKET_URL=
 
-Example HTTP deployment:
+# CometChat (client)
+VITE_COMETCHAT_APP_ID=
+VITE_COMETCHAT_REGION=in
+VITE_COMETCHAT_AUTH_KEY=
 
-VITE_API_URL=http://api.example.internal:3000
-CLIENT_URL=http://app.example.internal
-WEB_URL=http://app.example.internal
-FRONTEND_URL=http://app.example.internal
+# Firebase Web (FCM push)
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_VAPID_KEY=
 ```
 
 ---
@@ -386,16 +436,21 @@ docker compose down
 - POST /api/courses
 - PATCH /api/courses/:id
 
-### Chat
+### Chat (CometChat)
 
-- GET /api/chat/rooms/:roomId/messages
-- POST /api/chat/rooms/:roomId/messages
-- GET /api/chat/conversations
+Messaging and calling run on the CometChat SDK/UI Kit (not REST endpoints on this API).
+The API only exposes CometChat **support** routes:
+
+- POST /api/chat/agents/message — server-side AI agent (Groq)
+- POST /api/webhooks/cometchat/events — CometChat webhook (engagement analytics)
+- (auth routes return a `cometchatAuthToken` for client login)
 
 ### Administration
 
 - GET /api/admin/stats
-- GET /api/admin/moderation
+- GET /api/admin/users — manage users (+ ban/unban)
+- GET /api/admin/moderation — CometChat moderation queue
+- GET /api/admin/engagement — webhook-driven engagement metrics
 - GET /api/admin/events/log
 
 ---
@@ -443,35 +498,28 @@ docker compose down
 
 ## Roadmap
 
-### Phase 1
+### Phase 1 — Production LMS (branch `main`) ✅
 
-- Core LMS
-- Authentication
-- Courses
-- Enrollments
-- Quizzes
+- Core LMS (courses, enrollments, lessons, quizzes, certificates)
+- JWT authentication + role-based access control (5 roles)
+- FCM push notifications + admin dashboard
+- 100+ seeded users
+- Flutter mobile app
 
-### Phase 2
+### Phase 2 — CometChat Integration (branch `cometchat`) ✅
 
-- Real-time chat
-- AI assistants
-- Direct messaging
-- Notifications
-
-### Phase 3
-
-- Video calls
-- Office hours
-- Advanced moderation
-- Analytics
+- Existing + new users synced to CometChat
+- 1-1 chat, per-course group chat, office-hours video calls
+- AI agents (CometChat Agent Builder + Groq)
+- Moderation queue + webhook-driven engagement analytics
+- CometChat push alongside the existing FCM push
 
 ### Future Enhancements
 
-- Mobile applications
-- Gamification
-- Multi-language support
-- Enterprise portals
-- SCORM support
+- CometChat **tags** for cohort/role-based filtering (currently role is in user metadata)
+- Admin notification-log view
+- Gamification, SCORM, enterprise portals
+- Multi-language support (CometChat i18n)
 
 ---
 

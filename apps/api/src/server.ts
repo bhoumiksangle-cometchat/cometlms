@@ -101,8 +101,11 @@ app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/admin', adminRoutes);
+// Mount the CometChat-backed moderation router BEFORE the general admin router.
+// Express matches mounted routers in order, so `/api/admin/moderation*` must be
+// registered first or the broader `/api/admin` router would shadow it.
 app.use('/api/admin/moderation', moderationApiRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatAgentsRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/webhooks/cometchat/events', engagementWebhookRoutes);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CometChat } from '@cometchat/chat-sdk-javascript';
 import {
@@ -18,6 +18,17 @@ interface MessagesPageProps {
 
 type SidebarTab = 'conversations' | 'contacts' | 'call-logs';
 
+// Role filters map to the CometChat `role:*` user tags set by the server on
+// sync (see apps/api/src/services/cometchat.service.ts → buildUserTags). They
+// let a user discover people by role through CometChat's native tag filtering.
+const ROLE_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'instructor', label: 'Instructors' },
+  { value: 'student', label: 'Students' },
+  { value: 'admin', label: 'Admins' },
+] as const;
+type RoleFilter = (typeof ROLE_FILTERS)[number]['value'];
+
 export default function MessagesPage({ preselectedUser }: MessagesPageProps) {
   const { isChatLoggedIn } = useCometChat();
   const [searchParams] = useSearchParams();
@@ -25,6 +36,15 @@ export default function MessagesPage({ preselectedUser }: MessagesPageProps) {
   const [selectedUser, setSelectedUser] = useState<CometChat.User | undefined>(undefined);
   const [selectedGroup, setSelectedGroup] = useState<CometChat.Group | undefined>(undefined);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('contacts');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+
+  // Build a UsersRequestBuilder that filters by the selected role tag. `all`
+  // returns everyone; any other value filters to users carrying `role:<value>`.
+  const usersRequestBuilder = useMemo(() => {
+    const builder = new CometChat.UsersRequestBuilder().setLimit(30).withTags(true);
+    if (roleFilter !== 'all') builder.setTags([`role:${roleFilter}`]);
+    return builder;
+  }, [roleFilter]);
 
   // Determine the UID to preselect (prop takes priority over URL param)
   const preselectedUid = preselectedUser || searchParams.get('user') || undefined;
@@ -108,9 +128,25 @@ export default function MessagesPage({ preselectedUser }: MessagesPageProps) {
             activeConversation={activeConversation}
           />
         ) : sidebarTab === 'contacts' ? (
-          <CometChatUsers
-            onItemClick={handleUserClick}
-          />
+          <div className="users-pane">
+            <div className="users-filter" role="group" aria-label="Filter users by role">
+              {ROLE_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  className={`users-filter-chip ${roleFilter === f.value ? 'users-filter-chip--active' : ''}`}
+                  onClick={() => setRoleFilter(f.value)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <CometChatUsers
+              key={roleFilter}
+              usersRequestBuilder={usersRequestBuilder}
+              onItemClick={handleUserClick}
+            />
+          </div>
         ) : (
           <CometChatCallLogs />
         )}
